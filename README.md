@@ -7,7 +7,7 @@ Single-file browser tool (`repeat-defects-timeline.html`) that finds repeat defe
 1. Open `repeat-defects-timeline.html` in Chrome or Edge (double-click it, no install needed).
 2. Load the two CSV exports:
    - **Defect / call log**: Status, Location, Call D/T, Reason, Bus No … Notes (column N)
-   - **Work orders**: Work Order, Fleet Num, Date Completed, Work Performed Comment
+   - **EAM driver defect (EDVC) export**: Equipment, Date Reported, Type, Description, Driver Comments, Status, Priority, Assigned To Name, Problem Description, Closing Comments, Action Description, Cleared Date (Windows-1252 or UTF-8 both work)
 3. Adjust the settings if needed, then click **Build timeline**.
 
 All processing happens in the browser. No data is uploaded anywhere.
@@ -17,8 +17,10 @@ All processing happens in the browser. No data is uploaded anywhere.
 - **Repeat** = the same bus (Bus No, column E) with the same reason (column D) logged at least the minimum number of times (default 2). You can optionally require the repeats to be within N days of each other.
 - **Depot** = the Location of the bus's most recent call. Depots are listed in the sidebar and each one starts its own section (and its own page when printed).
 - **Header** of each repeat = the Notes (column N) from the most recent call.
-- **Timeline**: each call in date order, with the work orders for that fleet number completed after the call. A work order is shown under the most recent call before it, up to the "days after each call" window (default 7).
-  - Red = call reported, green = work order closed, amber = closed as no fault found / ok for service, dashed = "No driver submitted EDVC found" (no work order after the call).
+- **Timeline**: each call in date order, with the EDVCs for that bus (Equipment = Bus No) reported from the start of the call day up to the "days after each call" window (default 7). An EDVC on a later day than the next call belongs to that next call.
+  - Each EDVC shows the defect, the driver's notes (FaultIDs and duplicate Ticketer updates removed), the closing comment, action, problem, fitter and cleared date.
+  - The exact report time comes from the first driver note timestamp (UTC, shown in local time); breakdowns without notes use the Date Reported.
+  - Red = call reported, green = EDVC cleared, amber = no fault found / ok for service, red outline = EDVC not cleared yet, dashed = "No driver submitted EDVC found".
 - **Reasons dropdown**: untick reason codes you don't need. The selection is remembered in your browser, and saved into the shareable HTML.
 
 ## Outputs

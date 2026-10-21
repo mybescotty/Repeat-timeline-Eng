@@ -107,6 +107,8 @@ main { padding: 16px 20px 40px; min-width: 0; }
 .ev.call .ev-card { background: var(--row-red); border-color: rgba(231,76,60,0.3); }
 .ev.wo .ev-card { background: var(--row-green); border-color: rgba(39,174,96,0.3); }
 .ev.wo.nff .ev-card { background: var(--row-amber); border-color: rgba(243,156,18,0.4); }
+.ev.wo.uncleared .ev-card { background: #fff; border-color: rgba(231,76,60,0.5); }
+.ev.wo.uncleared::before { border-color: #e74c3c; }
 .ev.none .ev-card { background: #fff; border-style: dashed; color: #c0392b; }
 .ev.none::before { border-color: #e74c3c; left: -44px; width: 10px; height: 10px; border-width: 2px; top: 9px; }
 .ev.none { margin-left: 22px; }
@@ -191,8 +193,8 @@ main { padding: 16px 20px 40px; min-width: 0; }
         <input type="file" id="fileCalls" accept=".csv,text/csv" hidden>
       </div>
       <div class="drop" id="dropWO">
-        <strong>Work orders CSV</strong>
-        <span>Work Order, Fleet Num, Date Completed, Work Performed Comment</span>
+        <strong>EAM driver defect (EDVC) CSV</strong>
+        <span>Equipment, Date Reported, Description, Driver Comments … Closing Comments, Cleared Date</span>
         <div class="fname" id="fnWO">Click or drop file here</div>
         <input type="file" id="fileWO" accept=".csv,text/csv" hidden>
       </div>
@@ -210,7 +212,7 @@ main { padding: 16px 20px 40px; min-width: 0; }
         <input type="number" id="setSpan" min="0" value="0" title="0 = any time">
         <span style="font-size:10px">0 = any time</span>
       </label>
-      <label>Show work orders up to (days) after each call
+      <label>Show EDVCs up to (days) after each call
         <input type="number" id="setWOWin" min="0" value="7">
       </label>
       <label>Only calls from (optional)
@@ -231,7 +233,7 @@ main { padding: 16px 20px 40px; min-width: 0; }
   </aside>
   <main>
     <div class="toolbar">
-      <input type="search" id="search" placeholder="Search bus, reason, notes, WO comment…">
+      <input type="search" id="search" placeholder="Search bus, reason, notes, defect, closing comment…">
       <details class="reason-dd" id="reasonDD">
         <summary class="toggle-btn" id="reasonBtn">Reasons ▾</summary>
         <div class="reason-panel">
@@ -239,7 +241,7 @@ main { padding: 16px 20px 40px; min-width: 0; }
           <div id="reasonList"></div>
         </div>
       </details>
-      <button class="toggle-btn" id="tglOpen">No closing WO only</button>
+      <button class="toggle-btn" id="tglOpen">No EDVC only</button>
       <button class="toggle-btn" id="tglExpand">Expand all</button>
       <label style="font-size:12px;color:var(--text-secondary)">Sort
         <select id="sortBy" style="border:1px solid var(--border);border-radius:5px;padding:4px 6px;font-size:12px;color:var(--text-primary)">
@@ -253,7 +255,7 @@ main { padding: 16px 20px 40px; min-width: 0; }
     <div class="summary" id="summary"></div>
     <div class="legend">
       <span class="lc">Call / defect reported (Sheet 1)</span>
-      <span class="lw">Work order closed (Sheet 2)</span>
+      <span class="lw">EDVC cleared (EAM)</span>
       <span class="ln">Closed with no fault found / ok for service</span>
       <span class="lx">No driver submitted EDVC found</span>
     </div>
@@ -274,13 +276,24 @@ const CALL_COLS = {
   route:    { names: ['routecodes', 'routecode', 'route', 'routes'], idx: 12 },
   notes:    { names: ['notes', 'note', 'closingcomment', 'comments', 'comment'], idx: 13 }
 };
+// EAM driver defect (EDVC) export; older work order exports still map via the alias names
 const WO_COLS = {
-  wo:       { names: ['workorder', 'workorderno', 'workordernumber', 'wo', 'wono'], idx: 0 },
-  bus:      { names: ['fleetnum', 'fleetno', 'fleetnumber', 'fleet', 'busno', 'bus'], idx: 1 },
-  done:     { names: ['datecompleted', 'completeddate', 'completed', 'datecomplete', 'closeddate'], idx: 2 },
-  comment:  { names: ['workperformedcomment', 'workperformed', 'comment', 'comments', 'closingcomment'], idx: 3 }
+  bus:      { names: ['equipment', 'fleetnum', 'fleetno', 'fleetnumber', 'fleet', 'busno', 'bus'], idx: 2 },
+  reported: { names: ['datereported', 'reporteddate', 'datecompleted', 'completeddate'], idx: 3 },
+  type:     { names: ['type'], idx: 4 },
+  wo:       { names: ['driverdefectwos', 'workorder', 'workorderno', 'workordernumber', 'wo', 'wono'], idx: 5 },
+  defect:   { names: ['description'], idx: 6 },
+  driver:   { names: ['drivercomments', 'drivercomment'], idx: 7 },
+  rdwy:     { names: ['roadworthinessdefect', 'roadworthiness'], idx: 8 },
+  status:   { names: ['status'], idx: 9 },
+  priority: { names: ['priority'], idx: 10 },
+  assigned: { names: ['assignedtoname', 'assignedto'], idx: 12 },
+  problem:  { names: ['problemdescription'], idx: 13 },
+  closing:  { names: ['closingcomments', 'closingcomment', 'workperformedcomment', 'workperformed', 'comments', 'comment'], idx: 14 },
+  action:   { names: ['actiondescription', 'action'], idx: 15 },
+  cleared:  { names: ['cleareddate', 'datecleared'], idx: 16 }
 };
-const NFF_RE = /\b(ok for service|okay for service|no fault|nff|n\.f\.f|nothing found|no defect|unable to (replicate|find|recreate)|could not (replicate|find|recreate)|cannot (replicate|find)|tested ok|checked ok|all ok|checked and ok)\b/i;
+const NFF_RE = /\b(ok for service|okay for service|no fault|nff|n\.f\.f|nothing found|no defect|unable to (replicate|find|recreate)|could not (replicate|find|recreate)|cannot (replicate|find)|tested ok|checked\W*ok|all ok|checked and ok|working as (it )?should|working (ok|fine|correctly)|no issues?|no problems?)\b/i;
 const DAY = 86400000;
 
 /* ===== §2 CSV parsing ===== */
@@ -351,6 +364,7 @@ function dur(ms) {
   if (h > 0) return `${h} hr${h === 1 ? '' : 's'} ${m} min`;
   return `${m} min`;
 }
+const rel = ms => ms < 0 ? dur(-ms) + ' before' : dur(ms) + ' after';
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /* ===== §4 Loading + processing ===== */
@@ -365,12 +379,39 @@ function readCalls(rows) {
   }
   return { rows: out, map, header: rows[0] };
 }
+// Driver comments hold one or more "Note n (2026-10-16T22:49:56 UTC - Driver 123):text" entries,
+// often repeated by "Ticketer Portal update"; return the unique note texts with their times.
+function parseDriverNotes(s) {
+  if (!s) return [];
+  const re = /Note \d+ \((\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?)\s*UTC\s*-\s*Driver\s*([^)]*)\):/g;
+  const hits = [...s.matchAll(re)];
+  const clean = t => t.replace(/\*\s*FaultID[^*]*\*/gi, ' ').replace(/\.?\s*Reported by Driver\s*\d*/gi, ' ').replace(/Ticketer Portal update\s*:/gi, ' ')
+    .replace(/NOTE:/g, ' — ').replace(/\s*Position:/g, ' · Position:').replace(/\s+/g, ' ').replace(/^[\s.—-]+|[\s.—-]+$/g, '');
+  if (!hits.length) { const t = clean(s); return t ? [{ ts: null, text: t }] : []; }
+  const seen = new Set(), out = [];
+  hits.forEach((h, i) => {
+    const text = clean(s.slice(h.index + h[0].length, i + 1 < hits.length ? hits[i + 1].index : s.length));
+    const ts = Date.parse(h[1] + 'Z');
+    if (!seen.has(text)) { seen.add(text); out.push({ ts: isNaN(ts) ? null : ts, text: text + (h[2].trim() ? ` (driver ${h[2].trim()})` : '') }); }
+  });
+  return out;
+}
+const dayStart = ts => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };
 function readWOs(rows) {
   const map = mapColumns(rows[0], WO_COLS); const out = [];
   const g = (r, k) => map[k] >= 0 ? (r[map[k]] || '').trim() : '';
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i]; const bus = g(r, 'bus'); if (!bus) continue;
-    out.push({ wo: g(r, 'wo'), bk: busKey(bus), raw: g(r, 'done'), ts: parseDate(g(r, 'done')), comment: g(r, 'comment') });
+    const notes = parseDriverNotes(g(r, 'driver'));
+    const day = parseDate(g(r, 'reported'));
+    // Exact time from the first driver note (UTC); otherwise the reported date only
+    const noteTs = notes.reduce((m, n) => n.ts != null && (m == null || n.ts < m) ? n.ts : m, null);
+    const ts = noteTs ?? day;
+    const action = g(r, 'action'), closing = g(r, 'closing');
+    out.push({ wo: g(r, 'wo'), bk: busKey(bus), ts, dateOnly: noteTs == null && !/\d:\d/.test(g(r, 'reported')),
+      type: g(r, 'type'), defect: g(r, 'defect'), notes: notes.map(n => n.text).filter(Boolean), rdwy: /^y/i.test(g(r, 'rdwy')),
+      status: g(r, 'status'), priority: g(r, 'priority'), assigned: g(r, 'assigned'), problem: g(r, 'problem'),
+      closing, action, cleared: parseDate(g(r, 'cleared')), nff: /no fault/i.test(action) || NFF_RE.test(closing) });
   }
   return { rows: out, map, header: rows[0] };
 }
@@ -407,9 +448,11 @@ function makeRepeat(chain, busWOs, opt) {
   const events = []; let nff = 0, woCount = 0, unclosed = 0;
   chain.forEach((c, i) => {
     const next = chain[i + 1];
-    const upper = c.ts == null ? null : Math.min(c.ts + opt.woWin * DAY, next && next.ts != null ? next.ts : Infinity);
-    const matched = c.ts == null ? [] : busWOs.filter(w => w.ts >= c.ts && w.ts <= upper);
-    const woEvents = matched.map(w => { const isNff = NFF_RE.test(w.comment); if (isNff) nff++; woCount++; return { ...w, nff: isNff, after: w.ts - c.ts }; });
+    // EDVCs from the start of the call day up to the window; later-day EDVCs belong to the next call
+    const lower = c.ts == null ? null : dayStart(c.ts);
+    const upper = c.ts == null ? null : Math.min(c.ts + opt.woWin * DAY, next && next.ts != null ? dayStart(next.ts) - 1 : Infinity);
+    const matched = c.ts == null ? [] : busWOs.filter(w => w.ts >= lower && w.ts <= upper);
+    const woEvents = matched.map(w => { if (w.nff) nff++; woCount++; return { ...w, after: w.ts - c.ts, clearedAfter: w.cleared != null ? w.cleared - dayStart(c.ts) : null }; });
     if (!woEvents.length) unclosed++;
     events.push({ call: c, gap: i > 0 && c.ts != null && chain[i - 1].ts != null ? c.ts - chain[i - 1].ts : null, wos: woEvents });
   });
@@ -437,7 +480,10 @@ function loadFile(file, kind) {
   const rd = new FileReader();
   rd.onload = () => {
     try {
-      const rows = parseCSV(rd.result);
+      // EAM exports are Windows-1252, not UTF-8
+      let text;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(rd.result); } catch (e) { text = new TextDecoder('windows-1252').decode(rd.result); }
+      const rows = parseCSV(text);
       if (rows.length < 2) throw new Error('No data rows found');
       if (kind === 'calls') S.calls = readCalls(rows); else S.wos = readWOs(rows);
       S.files[kind] = file.name;
@@ -448,7 +494,7 @@ function loadFile(file, kind) {
     showColMap();
     $('btnBuild').disabled = !(S.calls && S.wos);
   };
-  rd.readAsText(file);
+  rd.readAsArrayBuffer(file);
 }
 function showColMap() {
   const part = (d, spec, label) => {
@@ -456,7 +502,7 @@ function showColMap() {
     const items = Object.keys(spec).map(k => `${k}: <code>${d.map[k] >= 0 ? esc(d.header[d.map[k]] || '(col ' + (d.map[k] + 1) + ')') : 'not found'}</code>`);
     return `<div><b>${label}</b> → ${items.join(' · ')}</div>`;
   };
-  $('colmap').innerHTML = part(S.calls, CALL_COLS, 'Calls') + part(S.wos, WO_COLS, 'Work orders');
+  $('colmap').innerHTML = part(S.calls, CALL_COLS, 'Calls') + part(S.wos, WO_COLS, 'EDVC');
 }
 function readSettings() {
   return { min: Math.max(2, +$('setMin').value || 2), span: Math.max(0, +$('setSpan').value || 0), woWin: Math.max(0, +$('setWOWin').value || 0), from: $('setFrom').value };
@@ -484,7 +530,7 @@ function showReport(excluded) {
 /* ===== §6 Rendering ===== */
 const repKey = r => r.bk + '|' + reasonKey(r.reason) + '|' + r.first;
 function haystack(r) {
-  if (!r._hs) r._hs = [r.bus, r.reason, r.depot, r.vtype, ...r.events.flatMap(e => [e.call.notes, e.call.route, e.call.driver, ...e.wos.flatMap(w => [w.wo, w.comment])])].join(' ').toLowerCase();
+  if (!r._hs) r._hs = [r.bus, r.reason, r.depot, r.vtype, ...r.events.flatMap(e => [e.call.notes, e.call.route, e.call.driver, ...e.wos.flatMap(w => [w.wo, w.defect, w.closing, w.action, w.problem, w.assigned, ...w.notes])])].join(' ').toLowerCase();
   return r._hs;
 }
 function filtered(ignoreDepot) {
@@ -505,14 +551,14 @@ function render() {
 
   const list = filtered(false);
   const m = S.meta, o = m.opt;
-  $('reportMeta').innerHTML = `Sources: <b>${esc(m.files.calls)}</b> (${m.nCalls.toLocaleString()} calls) · <b>${esc(m.files.wo)}</b> (${m.nWOs.toLocaleString()} work orders) · Generated ${fmt(m.generated)}<br>
-    Repeat = same bus + same reason ≥ ${o.min} times${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, calls from ${fmtDay(parseDate(o.from))}` : ''} · Work orders shown up to ${o.woWin} days after each call
-    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? ' · no closing WO only' : ''}${S.excluded.size ? ' · reasons excluded: ' + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
+  $('reportMeta').innerHTML = `Sources: <b>${esc(m.files.calls)}</b> (${m.nCalls.toLocaleString()} calls) · <b>${esc(m.files.wo)}</b> (${m.nWOs.toLocaleString()} EDVCs) · Generated ${fmt(m.generated)}<br>
+    Repeat = same bus + same reason ≥ ${o.min} times${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, calls from ${fmtDay(parseDate(o.from))}` : ''} · EDVCs shown from the call day up to ${o.woWin} days after each call
+    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? ' · no EDVC only' : ''}${S.excluded.size ? ' · reasons excluded: ' + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
   const buses = new Set(list.map(r => r.bk)).size;
   const calls = list.reduce((s, r) => s + r.count, 0);
   const open = list.filter(r => r.lastOpen).length;
   const nff = list.reduce((s, r) => s + r.nff, 0);
-  $('summary').innerHTML = [[list.length, 'Repeat defects'], [buses, 'Buses'], [calls, 'Calls involved'], [open, 'Latest call no WO'], [nff, 'NFF / OK closures']]
+  $('summary').innerHTML = [[list.length, 'Repeat defects'], [buses, 'Buses'], [calls, 'Calls involved'], [open, 'Latest call no EDVC'], [nff, 'NFF / OK closures']]
     .map(([v, l]) => `<div class="stat"><div class="v">${v.toLocaleString()}</div><div class="l">${l}</div></div>`).join('');
 
   if (!list.length) { $('report').innerHTML = `<div class="empty">No repeat defects match the current filters.</div>`; return; }
@@ -531,14 +577,14 @@ function renderRepeat(r) {
   const open = S.expandAll || S.expanded.has(k);
   const title = r.notes || r.reason;
   const badges = [`<span class="badge-navy">${r.count}× repeat</span>`,
-    r.lastOpen ? `<span class="badge-red">Latest call: no WO</span>` : `<span class="badge-green">Latest call: WO closed</span>`,
+    r.lastOpen ? `<span class="badge-red">Latest call: no EDVC</span>` : `<span class="badge-green">Latest call: EDVC found</span>`,
     r.nff ? `<span class="badge-amber">${r.nff} NFF / OK</span>` : '',
     `<button class="pdf-btn no-print" title="Print / save just this repeat as PDF">🖨 PDF</button>`].join('');
   return `<div class="repeat${open ? ' expanded' : ''}${r.lastOpen ? ' open-wo' : ''}" data-key="${esc(k)}">
     <div class="repeat-hdr">
       <div class="repeat-title"><span class="chev">▶</span> ${esc(title)}</div>
       <div class="repeat-badges">${badges}</div>
-      <div class="repeat-sub"><b>Bus ${esc(r.bus)}</b><span>Reason: <b>${esc(r.reason)}</b></span>${r.vtype ? `<span>${esc(r.vtype)}</span>` : ''}<span>${fmtDay(r.first)} → ${fmtDay(r.last)}</span><span>${r.woCount} work order${r.woCount === 1 ? '' : 's'}</span></div>
+      <div class="repeat-sub"><b>Bus ${esc(r.bus)}</b><span>Reason: <b>${esc(r.reason)}</b></span>${r.vtype ? `<span>${esc(r.vtype)}</span>` : ''}<span>${fmtDay(r.first)} → ${fmtDay(r.last)}</span><span>${r.woCount} EDVC${r.woCount === 1 ? '' : 's'}</span></div>
     </div>
     <div class="repeat-body"><div class="timeline">${r.events.map(renderEvent).join('')}</div></div>
   </div>`;
@@ -553,10 +599,20 @@ function renderEvent(e, i) {
     <div class="ev-meta">${[c.depot, c.route && 'Route ' + c.route, c.driver].filter(Boolean).map(esc).join(' · ')}</div>
   </div></div>`;
   if (!e.wos.length) h += `<div class="ev none"><div class="ev-card">No driver submitted EDVC found</div></div>`;
-  for (const w of e.wos) h += `<div class="ev wo${w.nff ? ' nff' : ''}"><div class="ev-card">
-    <div class="ev-top"><span class="ev-date">${fmt(w.ts)}</span><span class="ev-kind">Work order ${esc(w.wo)}</span><span class="ev-meta" style="margin:0">closed ${dur(w.after)} after call</span>${w.nff ? '<span class="badge-amber">NFF / OK</span>' : ''}</div>
-    <div class="ev-text">${w.comment ? esc(w.comment) : '<i style="opacity:.6">No comment</i>'}</div>
+  for (const w of e.wos) {
+    const when = w.dateOnly ? 'reported ' + (dayStart(w.ts) === dayStart(c.ts) ? 'same day' : dur(w.ts - dayStart(c.ts)) + ' after call day') : 'reported ' + rel(w.after) + ' call';
+    const badges = [w.type && w.type !== 'Driver Defect' ? `<span class="badge-navy">${esc(w.type)}</span>` : '',
+      w.rdwy ? '<span class="badge-red">Roadworthiness</span>' : '', /vor/i.test(w.priority + w.status) ? '<span class="badge-red">VOR</span>' : '',
+      w.cleared == null ? `<span class="badge-red">Not cleared${w.status ? ' · ' + esc(w.status) : ''}</span>` : '',
+      w.nff ? '<span class="badge-amber">NFF / OK</span>' : ''].join('');
+    h += `<div class="ev wo${w.nff ? ' nff' : ''}${w.cleared == null ? ' uncleared' : ''}"><div class="ev-card">
+    <div class="ev-top"><span class="ev-date">${w.dateOnly ? fmtDay(w.ts) : fmt(w.ts)}</span><span class="ev-kind">EDVC${w.wo ? ' ' + esc(w.wo) : ''}${w.defect ? ' · ' + esc(w.defect) : ''}</span><span class="ev-meta" style="margin:0">${when}</span>${badges}</div>
+    ${w.notes.length ? `<div class="ev-text"><b>Driver:</b> ${w.notes.map(esc).join('<br>')}</div>` : ''}
+    <div class="ev-head">Closing: ${w.closing ? esc(w.closing) : '<i style="opacity:.6">No closing comment</i>'}</div>
+    <div class="ev-meta">${[w.action && 'Action: ' + w.action, w.problem && 'Problem: ' + w.problem, w.assigned && 'By ' + w.assigned,
+      w.cleared != null && 'Cleared ' + fmtDay(w.cleared) + (w.clearedAfter != null ? (w.clearedAfter < DAY ? ' (same day as call)' : ` (${Math.floor(w.clearedAfter / DAY)} day${Math.floor(w.clearedAfter / DAY) === 1 ? '' : 's'} after call)`) : '')].filter(Boolean).map(esc).join(' · ')}</div>
   </div></div>`;
+  }
   return h;
 }
 
