@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Repeat Defects Timeline</title>
+<style>
+:root {
+  --bg-page:       #f5f5f7;
+  --bg-header:     #2D2A6E;
+  --bg-panel:      #ffffff;
+  --accent:        #E5007D;
+  --accent-hover:  #C0006A;
+  --row-red:       rgba(231,76,60,0.12);
+  --row-amber:     rgba(243,156,18,0.15);
+  --row-green:     rgba(39,174,96,0.15);
+  --text-primary:  #2D2A6E;
+  --text-secondary:#6b6b8a;
+  --text-on-dark:  #ffffff;
+  --border:        #e0e0ec;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: var(--bg-page); color: var(--text-primary); font-size: 13px; }
+header { background: var(--bg-header); color: var(--text-on-dark); padding: 8px 20px; min-height: 56px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+header h1 { margin: 0; font-size: 18px; }
+.tagline { font-size: 10px; opacity: 0.55; letter-spacing: 0.05em; margin-top: 2px; }
+.hdr-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.upload-btn { background: var(--accent); color: #fff; border: none; border-radius: 5px; padding: 7px 14px; font-size: 13px; cursor: pointer; }
+.upload-btn:hover { background: var(--accent-hover); }
+.upload-btn:disabled { opacity: 0.4; cursor: default; }
+.toggle-btn { background: none; border: 1px solid var(--accent); color: var(--accent); border-radius: 5px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
+.toggle-btn:hover { background: rgba(229,0,125,0.08); }
+.toggle-btn.active { background: var(--accent); color: #fff; }
+.action-btn { background: #27ae60; color: #fff; border: none; border-radius: 5px; padding: 7px 14px; font-size: 13px; cursor: pointer; }
+.action-btn:hover { background: #219a52; }
+.action-btn:disabled { opacity: 0.4; cursor: default; }
+.badge-navy { background: #2D2A6E; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
+.badge-red  { background: #e74c3c; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
+.badge-amber{ background: #e67e22; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
+.badge-green{ background: #27ae60; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
+
+/* Upload panel */
+.loader { max-width: 900px; margin: 30px auto; padding: 0 16px; }
+.panel { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-bottom: 16px; }
+.panel h2 { margin: 0 0 6px; font-size: 15px; }
+.panel p { margin: 4px 0; color: var(--text-secondary); }
+.drop-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+.drop { border: 2px dashed var(--border); border-radius: 8px; padding: 18px; text-align: center; cursor: pointer; transition: background .15s, border-color .15s; }
+.drop:hover, .drop.over { background: rgba(229,0,125,0.08); border-color: var(--accent); }
+.drop.ok { border-style: solid; border-color: #27ae60; background: var(--row-green); }
+.drop strong { display: block; font-size: 14px; margin-bottom: 4px; }
+.drop .fname { color: var(--text-secondary); font-size: 12px; margin-top: 6px; word-break: break-all; }
+.settings { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; }
+.settings label { display: flex; flex-direction: column; font-size: 12px; color: var(--text-secondary); gap: 3px; }
+.settings input, .settings select { border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; font-size: 13px; color: var(--text-primary); width: 140px; }
+.colmap { font-size: 12px; color: var(--text-secondary); margin-top: 10px; }
+.colmap code { background: #f0f0f6; padding: 1px 4px; border-radius: 3px; color: var(--text-primary); }
+.err { color: #c0392b; font-weight: 600; }
+
+/* Main layout */
+.layout { display: none; grid-template-columns: 240px 1fr; min-height: calc(100vh - 56px); }
+.layout.show { display: grid; }
+aside { background: var(--bg-panel); border-right: 1px solid var(--border); padding: 14px 0; position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; }
+aside h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-secondary); margin: 0 14px 8px; }
+.nav-item { display: flex; justify-content: space-between; align-items: center; padding: 7px 14px; cursor: pointer; font-size: 13px; border-radius: 0 20px 20px 0; margin-right: 8px; transition: background 0.15s; }
+.nav-item:hover  { background: rgba(229,0,125,0.08); }
+.nav-item.active { background: var(--accent); color: #fff; }
+.nav-item.active .badge-navy { background: #fff; color: var(--accent); }
+main { padding: 16px 20px 40px; min-width: 0; }
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.toolbar input[type=search] { border: 1px solid var(--border); border-radius: 5px; padding: 6px 10px; font-size: 13px; width: 260px; max-width: 100%; color: var(--text-primary); }
+.summary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.stat { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; min-width: 130px; }
+.stat .v { font-size: 22px; font-weight: 700; }
+.stat .l { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .04em; }
+.report-meta { font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+
+/* Depot + repeat cards */
+.depot { margin-bottom: 26px; }
+.depot-hdr { background: var(--bg-header); color: #fff; padding: 9px 14px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; }
+.depot-hdr h2 { margin: 0; font-size: 15px; }
+.depot-body { background: var(--bg-panel); border: 1px solid var(--border); border-top: none; border-radius: 0 0 8px 8px; padding: 10px; }
+.repeat { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; break-inside: avoid-page; }
+.repeat:last-child { margin-bottom: 0; }
+.repeat-hdr { padding: 10px 14px; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; border-left: 5px solid var(--accent); }
+.repeat-hdr:hover { background: rgba(229,0,125,0.08); }
+.repeat.open-wo .repeat-hdr { border-left-color: #e74c3c; }
+.repeat-title { font-size: 14px; font-weight: 700; }
+.repeat-sub { font-size: 12px; color: var(--text-secondary); display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.repeat-badges { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.repeat-body { display: none; padding: 6px 14px 14px; border-top: 1px solid var(--border); }
+.repeat.expanded .repeat-body { display: block; }
+.chev { display: inline-block; transition: transform .15s; color: var(--text-secondary); }
+.repeat.expanded .chev { transform: rotate(90deg); }
+
+/* Timeline */
+.timeline { position: relative; margin: 8px 0 0 8px; padding-left: 22px; }
+.timeline::before { content: ""; position: absolute; left: 6px; top: 4px; bottom: 4px; width: 2px; background: var(--border); }
+.ev { position: relative; margin-bottom: 10px; break-inside: avoid; }
+.ev::before { content: ""; position: absolute; left: -22px; top: 8px; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 3px solid var(--bg-header); }
+.ev.wo { margin-left: 22px; }
+.ev.wo::before { left: -44px; width: 10px; height: 10px; border-width: 2px; border-color: #27ae60; top: 9px; }
+.ev.wo.nff::before { border-color: #e67e22; }
+.ev-card { border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; background: #fff; }
+.ev.call .ev-card { background: var(--row-red); border-color: rgba(231,76,60,0.3); }
+.ev.wo .ev-card { background: var(--row-green); border-color: rgba(39,174,96,0.3); }
+.ev.wo.nff .ev-card { background: var(--row-amber); border-color: rgba(243,156,18,0.4); }
+.ev.none .ev-card { background: #fff; border-style: dashed; color: #c0392b; }
+.ev.none::before { border-color: #e74c3c; left: -44px; width: 10px; height: 10px; border-width: 2px; top: 9px; }
+.ev.none { margin-left: 22px; }
+.ev-top { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+.ev-date { font-weight: 700; white-space: nowrap; }
+.ev-kind { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); }
+.ev-head { font-weight: 600; margin-top: 3px; }
+.ev-text { margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
+.ev-meta { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+.gap { font-size: 11px; color: var(--text-secondary); margin: -4px 0 8px 0; font-style: italic; }
+.empty { padding: 30px; text-align: center; color: var(--text-secondary); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.legend .lc::before { background: var(--row-red); border: 1px solid rgba(231,76,60,0.5); }
+.legend .lw::before { background: var(--row-green); border: 1px solid rgba(39,174,96,0.5); }
+.legend .ln::before { background: var(--row-amber); border: 1px solid rgba(243,156,18,0.6); }
+.legend .lx::before { border: 1px dashed #e74c3c; }
+.print-only { display: none; }
+
+@media (max-width: 760px) {
+  .layout.show { display: block; }
+  aside { position: static; max-height: none; border-right: none; border-bottom: 1px solid var(--border); }
+  .drop-row { grid-template-columns: 1fr; }
+  main { padding: 12px 16px 30px; }
+  .repeat-hdr { grid-template-columns: 1fr; }
+  .repeat-badges { grid-row: auto; grid-column: 1; justify-content: flex-start; }
+}
+
+@media print {
+  @page { size: A4 portrait; margin: 12mm; }
+  body { background: #fff; font-size: 10.5px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  header { min-height: 0; padding: 8px 12px; }
+  .hdr-actions, aside, .toolbar, .loader, .no-print { display: none !important; }
+  .layout.show { display: block; }
+  main { padding: 0; }
+  .print-only { display: block; }
+  .repeat-body { display: block !important; }
+  .chev { display: none; }
+  .depot { break-before: page; }
+  .depot.first { break-before: auto; }
+  .depot-hdr { border-radius: 0; }
+  .repeat { break-inside: auto; }
+  .repeat-hdr { break-after: avoid; cursor: default; }
+  .stat { min-width: 0; padding: 6px 10px; }
+  .stat .v { font-size: 16px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🔧 Repeat Defects Timeline</h1>
+    <div class="tagline">Designed by First Bus Franchise · Engineering</div>
+  </div>
+  <div class="hdr-actions">
+    <button class="upload-btn" id="btnReload" style="display:none">Load new files</button>
+    <button class="action-btn" id="btnPrint" disabled>🖨 Print / PDF</button>
+    <button class="action-btn" id="btnExport" disabled style="background:#e67e22">⬇ Save shareable HTML</button>
+  </div>
+</header>
+
+<section class="loader" id="loader">
+  <div class="panel">
+    <h2>1. Load the two CSV files</h2>
+    <p>Everything runs in your browser. No data leaves this computer.</p>
+    <div class="drop-row">
+      <div class="drop" id="dropCalls">
+        <strong>Defect / call log CSV</strong>
+        <span>Status, Location, Call D/T, Reason, Bus No … Notes</span>
+        <div class="fname" id="fnCalls">Click or drop file here</div>
+        <input type="file" id="fileCalls" accept=".csv,text/csv" hidden>
+      </div>
+      <div class="drop" id="dropWO">
+        <strong>Work orders CSV</strong>
+        <span>Work Order, Fleet Num, Date Completed, Work Performed Comment</span>
+        <div class="fname" id="fnWO">Click or drop file here</div>
+        <input type="file" id="fileWO" accept=".csv,text/csv" hidden>
+      </div>
+    </div>
+    <div class="colmap" id="colmap"></div>
+  </div>
+  <div class="panel">
+    <h2>2. Settings</h2>
+    <p>A repeat is the same bus with the same reason logged more than once.</p>
+    <div class="settings">
+      <label>Min. occurrences to count as repeat
+        <input type="number" id="setMin" min="2" value="2">
+      </label>
+      <label>Max days between repeats
+        <input type="number" id="setSpan" min="0" value="0" title="0 = any time">
+        <span style="font-size:10px">0 = any time</span>
+      </label>
+      <label>Show work orders up to (days) after each call
+        <input type="number" id="setWOWin" min="0" value="7">
+      </label>
+      <label>Only calls from (optional)
+        <input type="date" id="setFrom">
+      </label>
+    </div>
+    <div style="margin-top:16px">
+      <button class="upload-btn" id="btnBuild" disabled>Build timeline</button>
+      <span id="buildMsg" style="margin-left:10px"></span>
+    </div>
+  </div>
+</section>
+
+<div class="layout" id="layout">
+  <aside>
+    <h3>Depots</h3>
+    <div id="depotNav"></div>
+  </aside>
+  <main>
+    <div class="toolbar">
+      <input type="search" id="search" placeholder="Search bus, reason, notes, WO comment…">
+      <button class="toggle-btn" id="tglOpen">No closing WO only</button>
+      <button class="toggle-btn" id="tglExpand">Expand all</button>
+      <label style="font-size:12px;color:var(--text-secondary)">Sort
+        <select id="sortBy" style="border:1px solid var(--border);border-radius:5px;padding:4px 6px;font-size:12px;color:var(--text-primary)">
+          <option value="count">Most repeats</option>
+          <option value="recent">Most recent</option>
+          <option value="bus">Bus number</option>
+        </select>
+      </label>
+    </div>
+    <div class="report-meta" id="reportMeta"></div>
+    <div class="summary" id="summary"></div>
+    <div class="legend">
+      <span class="lc">Call / defect reported (Sheet 1)</span>
+      <span class="lw">Work order closed (Sheet 2)</span>
+      <span class="ln">Closed with no fault found / ok for service</span>
+      <span class="lx">No work order found after call</span>
+    </div>
+    <div id="report"></div>
+  </main>
+</div>
+
+<script>
+/* ===== §1 Config ===== */
+const CALL_COLS = {
+  status:   { names: ['status', 'callstatus'], idx: 0 },
+  depot:    { names: ['location', 'depot', 'garage', 'site'], idx: 1 },
+  callDT:   { names: ['calldt', 'calldatetime', 'calldate', 'calltime', 'call'], idx: 2 },
+  reason:   { names: ['reason', 'fault', 'defect', 'defectreason'], idx: 3 },
+  bus:      { names: ['busno', 'busnumber', 'bus', 'fleetno', 'fleetnum', 'fleetnumber'], idx: 4 },
+  vtype:    { names: ['vehicletype', 'type'], idx: 5 },
+  driver:   { names: ['driver'], idx: 6 },
+  route:    { names: ['routecodes', 'routecode', 'route', 'routes'], idx: 12 },
+  notes:    { names: ['notes', 'note', 'closingcomment', 'comments', 'comment'], idx: 13 }
+};
+const WO_COLS = {
+  wo:       { names: ['workorder', 'workorderno', 'workordernumber', 'wo', 'wono'], idx: 0 },
+  bus:      { names: ['fleetnum', 'fleetno', 'fleetnumber', 'fleet', 'busno', 'bus'], idx: 1 },
+  done:     { names: ['datecompleted', 'completeddate', 'completed', 'datecomplete', 'closeddate'], idx: 2 },
+  comment:  { names: ['workperformedcomment', 'workperformed', 'comment', 'comments', 'closingcomment'], idx: 3 }
+};
+const NFF_RE = /\b(ok for service|okay for service|no fault|nff|n\.f\.f|nothing found|no defect|unable to (replicate|find|recreate)|could not (replicate|find|recreate)|cannot (replicate|find)|tested ok|checked ok|all ok|checked and ok)\b/i;
+const DAY = 86400000;
+
+/* ===== §2 CSV parsing ===== */
+function parseCSV(text) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const rows = []; let row = []; let field = ''; let q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+      else field += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.some(v => v.trim() !== '')) rows.push(row);
+      row = [];
+    } else field += c;
+  }
+  row.push(field);
+  if (row.some(v => v.trim() !== '')) rows.push(row);
+  return rows;
+}
+const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function mapColumns(header, spec) {
+  const h = header.map(norm); const map = {}; const used = new Set();
+  for (const [key, def] of Object.entries(spec)) {
+    let found = -1;
+    for (const n of def.names) { const i = h.findIndex((x, j) => x === n && !used.has(j)); if (i >= 0) { found = i; break; } }
+    if (found < 0) for (const n of def.names) { if (n.length < 4) continue; const i = h.findIndex((x, j) => x.startsWith(n) && !used.has(j)); if (i >= 0) { found = i; break; } }
+    if (found < 0 && def.idx < header.length && !used.has(def.idx)) found = def.idx;
+    map[key] = found; if (found >= 0) used.add(found);
+  }
+  return map;
+}
+
+/* ===== §3 Value helpers ===== */
+function parseDate(v) {
+  v = String(v || '').trim(); if (!v) return null;
+  let m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})(?:[ T,]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?)?/i);
+  if (m) {
+    let y = +m[3]; if (y < 100) y += 2000;
+    let hh = +(m[4] || 0); const ap = (m[7] || '').toLowerCase();
+    if (ap === 'pm' && hh < 12) hh += 12; if (ap === 'am' && hh === 12) hh = 0;
+    const d = new Date(y, +m[2] - 1, +m[1], hh, +(m[5] || 0), +(m[6] || 0));
+    return isNaN(d) ? null : d.getTime();
+  }
+  m = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) { const d = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)); return isNaN(d) ? null : d.getTime(); }
+  if (/^\d{5}(\.\d+)?$/.test(v)) { const n = parseFloat(v); if (n > 20000 && n < 80000) { const d = new Date(Math.round((n - 25569) * DAY)); return d.getTime() + d.getTimezoneOffset() * 60000; } }
+  const t = Date.parse(v); return isNaN(t) ? null : t;
+}
+function busKey(v) {
+  const s = String(v || '').trim().toUpperCase(); if (!s) return '';
+  const m = s.match(/\d{3,}/); if (m) return m[0].replace(/^0+(?=\d)/, '');
+  return s.replace(/\s+/g, '');
+}
+const reasonKey = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const pad = n => String(n).padStart(2, '0');
+function fmt(ts) { if (ts == null) return '—'; const d = new Date(ts); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function fmtDay(ts) { if (ts == null) return '—'; const d = new Date(ts); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`; }
+function dur(ms) {
+  if (ms == null || ms < 0) return '';
+  const d = Math.floor(ms / DAY), h = Math.floor((ms % DAY) / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  if (d > 0) return `${d} day${d === 1 ? '' : 's'}${h ? ' ' + h + ' hr' + (h === 1 ? '' : 's') : ''}`;
+  if (h > 0) return `${h} hr${h === 1 ? '' : 's'} ${m} min`;
+  return `${m} min`;
+}
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* ===== §4 Loading + processing ===== */
+function readCalls(rows) {
+  const map = mapColumns(rows[0], CALL_COLS); const out = [];
+  const g = (r, k) => map[k] >= 0 ? (r[map[k]] || '').trim() : '';
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i]; const bus = g(r, 'bus'); const reason = g(r, 'reason');
+    if (!bus || !reason) continue;
+    out.push({ status: g(r, 'status'), depot: g(r, 'depot') || 'Unknown', raw: g(r, 'callDT'), ts: parseDate(g(r, 'callDT')),
+      reason, bus, bk: busKey(bus), vtype: g(r, 'vtype'), driver: g(r, 'driver'), route: g(r, 'route'), notes: g(r, 'notes') });
+  }
+  return { rows: out, map, header: rows[0] };
+}
+function readWOs(rows) {
+  const map = mapColumns(rows[0], WO_COLS); const out = [];
+  const g = (r, k) => map[k] >= 0 ? (r[map[k]] || '').trim() : '';
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i]; const bus = g(r, 'bus'); if (!bus) continue;
+    out.push({ wo: g(r, 'wo'), bk: busKey(bus), raw: g(r, 'done'), ts: parseDate(g(r, 'done')), comment: g(r, 'comment') });
+  }
+  return { rows: out, map, header: rows[0] };
+}
+
+function buildRepeats(calls, wos, opt) {
+  const fromTs = opt.from ? parseDate(opt.from) : null;
+  const woByBus = new Map();
+  for (const w of wos) { if (w.ts == null) continue; if (!woByBus.has(w.bk)) woByBus.set(w.bk, []); woByBus.get(w.bk).push(w); }
+  for (const list of woByBus.values()) list.sort((a, b) => a.ts - b.ts);
+
+  const groups = new Map();
+  for (const c of calls) {
+    if (fromTs != null && (c.ts == null || c.ts < fromTs)) continue;
+    const k = c.bk + '|' + reasonKey(c.reason);
+    if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c);
+  }
+  const repeats = [];
+  for (const list of groups.values()) {
+    list.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+    // split into chains where consecutive calls are within the max gap
+    const chains = []; let cur = [];
+    for (const c of list) {
+      if (cur.length && opt.span > 0 && c.ts != null && cur[cur.length - 1].ts != null && c.ts - cur[cur.length - 1].ts > opt.span * DAY) { chains.push(cur); cur = []; }
+      cur.push(c);
+    }
+    if (cur.length) chains.push(cur);
+    for (const ch of chains) if (ch.length >= opt.min) repeats.push(makeRepeat(ch, woByBus.get(ch[0].bk) || [], opt));
+  }
+  return repeats;
+}
+
+function makeRepeat(chain, busWOs, opt) {
+  const last = chain[chain.length - 1];
+  const events = []; let nff = 0, woCount = 0, unclosed = 0;
+  chain.forEach((c, i) => {
+    const next = chain[i + 1];
+    const upper = c.ts == null ? null : Math.min(c.ts + opt.woWin * DAY, next && next.ts != null ? next.ts : Infinity);
+    const matched = c.ts == null ? [] : busWOs.filter(w => w.ts >= c.ts && w.ts <= upper);
+    const woEvents = matched.map(w => { const isNff = NFF_RE.test(w.comment); if (isNff) nff++; woCount++; return { ...w, nff: isNff, after: w.ts - c.ts }; });
+    if (!woEvents.length) unclosed++;
+    events.push({ call: c, gap: i > 0 && c.ts != null && chain[i - 1].ts != null ? c.ts - chain[i - 1].ts : null, wos: woEvents });
+  });
+  // Depot is where the bus was most recently reported
+  return { bus: last.bus, bk: last.bk, reason: last.reason, depot: last.depot, notes: last.notes, vtype: last.vtype,
+    first: chain[0].ts, last: last.ts, count: chain.length, events, nff, woCount, unclosed,
+    lastOpen: events[events.length - 1].wos.length === 0 };
+}
+
+/* ===== §5 State + file handling ===== */
+const $ = id => document.getElementById(id);
+const S = { calls: null, wos: null, files: { calls: '', wo: '' }, repeats: [], meta: null, depot: 'ALL', q: '', openOnly: false, expandAll: false, expanded: new Set(), sort: 'count' };
+
+function wireDrop(dropId, inputId, kind) {
+  const drop = $(dropId), input = $(inputId);
+  drop.addEventListener('click', () => input.click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0], kind); });
+  input.addEventListener('change', () => { if (input.files[0]) loadFile(input.files[0], kind); input.value = ''; });
+}
+function loadFile(file, kind) {
+  const fn = kind === 'calls' ? $('fnCalls') : $('fnWO');
+  fn.textContent = 'Reading ' + file.name + '…';
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const rows = parseCSV(rd.result);
+      if (rows.length < 2) throw new Error('No data rows found');
+      if (kind === 'calls') S.calls = readCalls(rows); else S.wos = readWOs(rows);
+      S.files[kind] = file.name;
+      const n = kind === 'calls' ? S.calls.rows.length : S.wos.rows.length;
+      fn.textContent = `${file.name} — ${n.toLocaleString()} rows`;
+      (kind === 'calls' ? $('dropCalls') : $('dropWO')).classList.add('ok');
+    } catch (err) { fn.innerHTML = `<span class="err">${esc(err.message)}</span>`; }
+    showColMap();
+    $('btnBuild').disabled = !(S.calls && S.wos);
+  };
+  rd.readAsText(file);
+}
+function showColMap() {
+  const part = (d, spec, label) => {
+    if (!d) return '';
+    const items = Object.keys(spec).map(k => `${k}: <code>${d.map[k] >= 0 ? esc(d.header[d.map[k]] || '(col ' + (d.map[k] + 1) + ')') : 'not found'}</code>`);
+    return `<div><b>${label}</b> → ${items.join(' · ')}</div>`;
+  };
+  $('colmap').innerHTML = part(S.calls, CALL_COLS, 'Calls') + part(S.wos, WO_COLS, 'Work orders');
+}
+function readSettings() {
+  return { min: Math.max(2, +$('setMin').value || 2), span: Math.max(0, +$('setSpan').value || 0), woWin: Math.max(0, +$('setWOWin').value || 0), from: $('setFrom').value };
+}
+function build() {
+  const opt = readSettings();
+  $('buildMsg').textContent = 'Working…';
+  setTimeout(() => {
+    S.repeats = buildRepeats(S.calls.rows, S.wos.rows, opt);
+    S.meta = { generated: Date.now(), files: { ...S.files }, nCalls: S.calls.rows.length, nWOs: S.wos.rows.length, opt };
+    $('buildMsg').textContent = '';
+    showReport();
+  }, 20);
+}
+function showReport() {
+  S.depot = 'ALL'; S.expanded.clear();
+  $('loader').style.display = 'none'; $('layout').classList.add('show');
+  $('btnReload').style.display = ''; $('btnPrint').disabled = false; $('btnExport').disabled = false;
+  render();
+}
+
+/* ===== §6 Rendering ===== */
+const repKey = r => r.bk + '|' + reasonKey(r.reason) + '|' + r.first;
+function haystack(r) {
+  if (!r._hs) r._hs = [r.bus, r.reason, r.depot, r.vtype, ...r.events.flatMap(e => [e.call.notes, e.call.route, e.call.driver, ...e.wos.flatMap(w => [w.wo, w.comment])])].join(' ').toLowerCase();
+  return r._hs;
+}
+function filtered(ignoreDepot) {
+  const q = S.q.trim().toLowerCase();
+  return S.repeats.filter(r => (ignoreDepot || S.depot === 'ALL' || r.depot === S.depot) && (!S.openOnly || r.lastOpen) && (!q || haystack(r).includes(q)));
+}
+function sortList(list) {
+  const f = { count: (a, b) => b.count - a.count || (b.last ?? 0) - (a.last ?? 0), recent: (a, b) => (b.last ?? 0) - (a.last ?? 0), bus: (a, b) => String(a.bk).localeCompare(String(b.bk), undefined, { numeric: true }) }[S.sort];
+  return list.sort(f);
+}
+function render() {
+  const all = filtered(true);
+  const depotCounts = new Map();
+  for (const r of all) depotCounts.set(r.depot, (depotCounts.get(r.depot) || 0) + 1);
+  const depots = [...new Set(S.repeats.map(r => r.depot))].sort((a, b) => a.localeCompare(b));
+  $('depotNav').innerHTML = [['ALL', 'All depots', all.length], ...depots.map(d => [d, d, depotCounts.get(d) || 0])]
+    .map(([k, l, n]) => `<div class="nav-item${S.depot === k ? ' active' : ''}" data-depot="${esc(k)}"><span>${esc(l)}</span><span class="badge-navy">${n}</span></div>`).join('');
+
+  const list = filtered(false);
+  const m = S.meta, o = m.opt;
+  $('reportMeta').innerHTML = `Sources: <b>${esc(m.files.calls)}</b> (${m.nCalls.toLocaleString()} calls) · <b>${esc(m.files.wo)}</b> (${m.nWOs.toLocaleString()} work orders) · Generated ${fmt(m.generated)}<br>
+    Repeat = same bus + same reason ≥ ${o.min} times${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, calls from ${fmtDay(parseDate(o.from))}` : ''} · Work orders shown up to ${o.woWin} days after each call
+    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? ' · no closing WO only' : ''}</span>`;
+  const buses = new Set(list.map(r => r.bk)).size;
+  const calls = list.reduce((s, r) => s + r.count, 0);
+  const open = list.filter(r => r.lastOpen).length;
+  const nff = list.reduce((s, r) => s + r.nff, 0);
+  $('summary').innerHTML = [[list.length, 'Repeat defects'], [buses, 'Buses'], [calls, 'Calls involved'], [open, 'Latest call no WO'], [nff, 'NFF / OK closures']]
+    .map(([v, l]) => `<div class="stat"><div class="v">${v.toLocaleString()}</div><div class="l">${l}</div></div>`).join('');
+
+  if (!list.length) { $('report').innerHTML = `<div class="empty">No repeat defects match the current filters.</div>`; return; }
+  const byDepot = new Map();
+  for (const r of list) { if (!byDepot.has(r.depot)) byDepot.set(r.depot, []); byDepot.get(r.depot).push(r); }
+  let html = '', first = true;
+  for (const d of [...byDepot.keys()].sort((a, b) => a.localeCompare(b))) {
+    const reps = sortList(byDepot.get(d));
+    html += `<section class="depot${first ? ' first' : ''}"><div class="depot-hdr"><h2>${esc(d)}</h2><span>${reps.length} repeat${reps.length === 1 ? '' : 's'} · ${new Set(reps.map(r => r.bk)).size} buses</span></div><div class="depot-body">${reps.map(renderRepeat).join('')}</div></section>`;
+    first = false;
+  }
+  $('report').innerHTML = html;
+}
+function renderRepeat(r) {
+  const k = repKey(r);
+  const open = S.expandAll || S.expanded.has(k);
+  const title = r.notes || r.reason;
+  const badges = [`<span class="badge-navy">${r.count}× repeat</span>`,
+    r.lastOpen ? `<span class="badge-red">Latest call: no WO</span>` : `<span class="badge-green">Latest call: WO closed</span>`,
+    r.nff ? `<span class="badge-amber">${r.nff} NFF / OK</span>` : ''].join('');
+  return `<div class="repeat${open ? ' expanded' : ''}${r.lastOpen ? ' open-wo' : ''}" data-key="${esc(k)}">
+    <div class="repeat-hdr">
+      <div class="repeat-title"><span class="chev">▶</span> ${esc(title)}</div>
+      <div class="repeat-badges">${badges}</div>
+      <div class="repeat-sub"><b>Bus ${esc(r.bus)}</b><span>Reason: <b>${esc(r.reason)}</b></span>${r.vtype ? `<span>${esc(r.vtype)}</span>` : ''}<span>${fmtDay(r.first)} → ${fmtDay(r.last)}</span><span>${r.woCount} work order${r.woCount === 1 ? '' : 's'}</span></div>
+    </div>
+    <div class="repeat-body"><div class="timeline">${r.events.map(renderEvent).join('')}</div></div>
+  </div>`;
+}
+function renderEvent(e, i) {
+  const c = e.call;
+  let h = '';
+  if (i > 0) h += `<div class="gap">↻ Repeated ${e.gap != null ? dur(e.gap) + ' later' : ''}</div>`;
+  h += `<div class="ev call"><div class="ev-card">
+    <div class="ev-top"><span class="ev-date">${c.ts != null ? fmt(c.ts) : esc(c.raw || 'No date')}</span><span class="ev-kind">Call ${i + 1} · ${esc(c.reason)}</span>${c.status ? `<span class="badge-navy">${esc(c.status)}</span>` : ''}</div>
+    <div class="ev-head">${c.notes ? esc(c.notes) : '<i style="opacity:.6">No notes</i>'}</div>
+    <div class="ev-meta">${[c.depot, c.route && 'Route ' + c.route, c.driver].filter(Boolean).map(esc).join(' · ')}</div>
+  </div></div>`;
+  if (!e.wos.length) h += `<div class="ev none"><div class="ev-card">No work order found for bus ${esc(c.bus)} after this call</div></div>`;
+  for (const w of e.wos) h += `<div class="ev wo${w.nff ? ' nff' : ''}"><div class="ev-card">
+    <div class="ev-top"><span class="ev-date">${fmt(w.ts)}</span><span class="ev-kind">Work order ${esc(w.wo)}</span><span class="ev-meta" style="margin:0">closed ${dur(w.after)} after call</span>${w.nff ? '<span class="badge-amber">NFF / OK</span>' : ''}</div>
+    <div class="ev-text">${w.comment ? esc(w.comment) : '<i style="opacity:.6">No comment</i>'}</div>
+  </div></div>`;
+  return h;
+}
+
+/* ===== §7 Print + shareable export ===== */
+function doPrint() {
+  const prev = S.expandAll; S.expandAll = true; render();
+  const t = document.title;
+  document.title = 'Repeat Defects - ' + (S.depot === 'ALL' ? 'All depots' : S.depot) + ' - ' + fmtDay(Date.now()).replace(/\//g, '-');
+  setTimeout(() => { window.print(); document.title = t; S.expandAll = prev; render(); }, 50);
+}
+function doExport() {
+  const strip = r => { const { _hs, ...rest } = r; return rest; };
+  const snap = { v: 1, meta: S.meta, repeats: S.repeats.map(strip) };
+  const doc = document.documentElement.cloneNode(true);
+  doc.querySelectorAll('#embedded').forEach(n => n.remove());
+  doc.querySelector('#report').innerHTML = ''; doc.querySelector('#depotNav').innerHTML = '';
+  doc.querySelector('#summary').innerHTML = ''; doc.querySelector('#reportMeta').innerHTML = '';
+  doc.querySelector('#layout').classList.remove('show');
+  doc.querySelector('#loader').removeAttribute('style');
+  const s = document.createElement('script');
+  s.type = 'application/json'; s.id = 'embedded';
+  s.textContent = JSON.stringify(snap).replace(/</g, '\\u003c');
+  doc.querySelector('head').appendChild(s);
+  const html = '<!DOCTYPE html>\n' + doc.outerHTML;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+  a.download = 'repeat-defects-' + fmtDay(Date.now()).split('/').reverse().join('-') + '.html';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+/* ===== §8 Init ===== */
+wireDrop('dropCalls', 'fileCalls', 'calls');
+wireDrop('dropWO', 'fileWO', 'wo');
+$('btnBuild').addEventListener('click', build);
+$('btnPrint').addEventListener('click', doPrint);
+$('btnExport').addEventListener('click', doExport);
+$('btnReload').addEventListener('click', () => { $('layout').classList.remove('show'); $('loader').style.display = ''; });
+$('depotNav').addEventListener('click', e => { const it = e.target.closest('.nav-item'); if (!it) return; S.depot = it.dataset.depot; render(); window.scrollTo(0, 0); });
+$('report').addEventListener('click', e => {
+  const h = e.target.closest('.repeat-hdr'); if (!h) return;
+  const card = h.parentElement; const k = card.dataset.key;
+  if (card.classList.toggle('expanded')) S.expanded.add(k); else S.expanded.delete(k);
+});
+let qTimer; $('search').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => { S.q = e.target.value; render(); }, 200); });
+$('tglOpen').addEventListener('click', e => { S.openOnly = !S.openOnly; e.target.classList.toggle('active', S.openOnly); render(); });
+$('tglExpand').addEventListener('click', e => { S.expandAll = !S.expandAll; if (!S.expandAll) S.expanded.clear(); e.target.classList.toggle('active', S.expandAll); e.target.textContent = S.expandAll ? 'Collapse all' : 'Expand all'; render(); });
+$('sortBy').addEventListener('change', e => { S.sort = e.target.value; render(); });
+
+(function loadEmbedded() {
+  const el = $('embedded'); if (!el) return;
+  try {
+    const snap = JSON.parse(el.textContent);
+    S.repeats = snap.repeats; S.meta = snap.meta;
+    showReport();
+    document.querySelector('.tagline').textContent = 'Designed by First Bus Franchise · Engineering · Snapshot ' + fmt(S.meta.generated);
+  } catch (err) { console.error('Embedded data unreadable', err); }
+})();
+</script>
+</body>
+</html>
