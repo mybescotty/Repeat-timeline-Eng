@@ -122,6 +122,15 @@ main { padding: 16px 20px 40px; min-width: 0; }
 .legend .lw::before { background: var(--row-green); border: 1px solid rgba(39,174,96,0.5); }
 .legend .ln::before { background: var(--row-amber); border: 1px solid rgba(243,156,18,0.6); }
 .legend .lx::before { border: 1px dashed #e74c3c; }
+.reason-dd { position: relative; }
+.reason-dd > summary { list-style: none; }
+.reason-dd > summary::-webkit-details-marker { display: none; }
+.reason-panel { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 20px rgba(45,42,110,0.15); padding: 8px 0; min-width: 260px; max-width: 90vw; max-height: 360px; overflow-y: auto; }
+.reason-panel .rp-actions { display: flex; gap: 6px; padding: 0 10px 8px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.reason-panel label { display: flex; align-items: center; gap: 8px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
+.reason-panel label:hover { background: rgba(229,0,125,0.08); }
+.reason-panel label input { accent-color: var(--accent); }
+.reason-panel .rp-n { margin-left: auto; }
 .print-only { display: none; }
 
 @media (max-width: 760px) {
@@ -219,6 +228,13 @@ main { padding: 16px 20px 40px; min-width: 0; }
   <main>
     <div class="toolbar">
       <input type="search" id="search" placeholder="Search bus, reason, notes, WO comment…">
+      <details class="reason-dd" id="reasonDD">
+        <summary class="toggle-btn" id="reasonBtn">Reasons ▾</summary>
+        <div class="reason-panel">
+          <div class="rp-actions"><button class="toggle-btn" id="rsAll" type="button">Select all</button><button class="toggle-btn" id="rsNone" type="button">Clear all</button></div>
+          <div id="reasonList"></div>
+        </div>
+      </details>
       <button class="toggle-btn" id="tglOpen">No closing WO only</button>
       <button class="toggle-btn" id="tglExpand">Expand all</button>
       <label style="font-size:12px;color:var(--text-secondary)">Sort
@@ -235,7 +251,7 @@ main { padding: 16px 20px 40px; min-width: 0; }
       <span class="lc">Call / defect reported (Sheet 1)</span>
       <span class="lw">Work order closed (Sheet 2)</span>
       <span class="ln">Closed with no fault found / ok for service</span>
-      <span class="lx">No work order found after call</span>
+      <span class="lx">No driver submitted EDVC found</span>
     </div>
     <div id="report"></div>
   </main>
@@ -401,7 +417,7 @@ function makeRepeat(chain, busWOs, opt) {
 
 /* ===== §5 State + file handling ===== */
 const $ = id => document.getElementById(id);
-const S = { calls: null, wos: null, files: { calls: '', wo: '' }, repeats: [], meta: null, depot: 'ALL', q: '', openOnly: false, expandAll: false, expanded: new Set(), sort: 'count' };
+const S = { calls: null, wos: null, files: { calls: '', wo: '' }, repeats: [], meta: null, depot: 'ALL', q: '', openOnly: false, expandAll: false, expanded: new Set(), sort: 'count', excluded: new Set() };
 
 function wireDrop(dropId, inputId, kind) {
   const drop = $(dropId), input = $(inputId);
@@ -451,8 +467,11 @@ function build() {
     showReport();
   }, 20);
 }
-function showReport() {
+function showReport(excluded) {
   S.depot = 'ALL'; S.expanded.clear();
+  if (excluded) S.excluded = new Set(excluded);
+  else try { S.excluded = new Set(JSON.parse(localStorage.getItem('rdt-excluded-reasons') || '[]')); } catch (e) { S.excluded = new Set(); }
+  renderReasons();
   $('loader').style.display = 'none'; $('layout').classList.add('show');
   $('btnReload').style.display = ''; $('btnPrint').disabled = false; $('btnExport').disabled = false;
   render();
@@ -466,7 +485,7 @@ function haystack(r) {
 }
 function filtered(ignoreDepot) {
   const q = S.q.trim().toLowerCase();
-  return S.repeats.filter(r => (ignoreDepot || S.depot === 'ALL' || r.depot === S.depot) && (!S.openOnly || r.lastOpen) && (!q || haystack(r).includes(q)));
+  return S.repeats.filter(r => (ignoreDepot || S.depot === 'ALL' || r.depot === S.depot) && (!S.openOnly || r.lastOpen) && !S.excluded.has(reasonKey(r.reason)) && (!q || haystack(r).includes(q)));
 }
 function sortList(list) {
   const f = { count: (a, b) => b.count - a.count || (b.last ?? 0) - (a.last ?? 0), recent: (a, b) => (b.last ?? 0) - (a.last ?? 0), bus: (a, b) => String(a.bk).localeCompare(String(b.bk), undefined, { numeric: true }) }[S.sort];
@@ -484,7 +503,7 @@ function render() {
   const m = S.meta, o = m.opt;
   $('reportMeta').innerHTML = `Sources: <b>${esc(m.files.calls)}</b> (${m.nCalls.toLocaleString()} calls) · <b>${esc(m.files.wo)}</b> (${m.nWOs.toLocaleString()} work orders) · Generated ${fmt(m.generated)}<br>
     Repeat = same bus + same reason ≥ ${o.min} times${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, calls from ${fmtDay(parseDate(o.from))}` : ''} · Work orders shown up to ${o.woWin} days after each call
-    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? ' · no closing WO only' : ''}</span>`;
+    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? ' · no closing WO only' : ''}${S.excluded.size ? ' · reasons excluded: ' + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
   const buses = new Set(list.map(r => r.bk)).size;
   const calls = list.reduce((s, r) => s + r.count, 0);
   const open = list.filter(r => r.lastOpen).length;
@@ -528,12 +547,35 @@ function renderEvent(e, i) {
     <div class="ev-head">${c.notes ? esc(c.notes) : '<i style="opacity:.6">No notes</i>'}</div>
     <div class="ev-meta">${[c.depot, c.route && 'Route ' + c.route, c.driver].filter(Boolean).map(esc).join(' · ')}</div>
   </div></div>`;
-  if (!e.wos.length) h += `<div class="ev none"><div class="ev-card">No work order found for bus ${esc(c.bus)} after this call</div></div>`;
+  if (!e.wos.length) h += `<div class="ev none"><div class="ev-card">No driver submitted EDVC found</div></div>`;
   for (const w of e.wos) h += `<div class="ev wo${w.nff ? ' nff' : ''}"><div class="ev-card">
     <div class="ev-top"><span class="ev-date">${fmt(w.ts)}</span><span class="ev-kind">Work order ${esc(w.wo)}</span><span class="ev-meta" style="margin:0">closed ${dur(w.after)} after call</span>${w.nff ? '<span class="badge-amber">NFF / OK</span>' : ''}</div>
     <div class="ev-text">${w.comment ? esc(w.comment) : '<i style="opacity:.6">No comment</i>'}</div>
   </div></div>`;
   return h;
+}
+
+/* ===== §6b Reason filter ===== */
+function reasonNames() {
+  const m = new Map();
+  for (const r of S.repeats) { const k = reasonKey(r.reason); if (!m.has(k)) m.set(k, { k, name: r.reason, n: 0 }); m.get(k).n++; }
+  return [...m.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+function renderReasons() {
+  const list = reasonNames();
+  // Drop exclusions for reasons that aren't in this data set
+  for (const k of [...S.excluded]) if (!list.some(x => x.k === k)) S.excluded.delete(k);
+  $('reasonList').innerHTML = list.map(x => `<label><input type="checkbox" value="${esc(x.k)}"${S.excluded.has(x.k) ? '' : ' checked'}><span>${esc(x.name)}</span><span class="badge-navy rp-n">${x.n}</span></label>`).join('');
+  updateReasonBtn(list.length);
+}
+function updateReasonBtn(total) {
+  const n = total ?? reasonNames().length;
+  $('reasonBtn').textContent = `Reasons (${n - S.excluded.size}/${n}) ▾`;
+  $('reasonBtn').classList.toggle('active', S.excluded.size > 0);
+}
+function reasonsChanged() {
+  try { localStorage.setItem('rdt-excluded-reasons', JSON.stringify([...S.excluded])); } catch (e) {}
+  updateReasonBtn(); render();
 }
 
 /* ===== §7 Print + shareable export ===== */
@@ -545,7 +587,7 @@ function doPrint() {
 }
 function doExport() {
   const strip = r => { const { _hs, ...rest } = r; return rest; };
-  const snap = { v: 1, meta: S.meta, repeats: S.repeats.map(strip) };
+  const snap = { v: 1, meta: S.meta, repeats: S.repeats.map(strip), excluded: [...S.excluded] };
   const doc = document.documentElement.cloneNode(true);
   doc.querySelectorAll('#embedded').forEach(n => n.remove());
   doc.querySelector('#report').innerHTML = ''; doc.querySelector('#depotNav').innerHTML = '';
@@ -581,13 +623,20 @@ let qTimer; $('search').addEventListener('input', e => { clearTimeout(qTimer); q
 $('tglOpen').addEventListener('click', e => { S.openOnly = !S.openOnly; e.target.classList.toggle('active', S.openOnly); render(); });
 $('tglExpand').addEventListener('click', e => { S.expandAll = !S.expandAll; if (!S.expandAll) S.expanded.clear(); e.target.classList.toggle('active', S.expandAll); e.target.textContent = S.expandAll ? 'Collapse all' : 'Expand all'; render(); });
 $('sortBy').addEventListener('change', e => { S.sort = e.target.value; render(); });
+$('reasonList').addEventListener('change', e => {
+  const k = e.target.value; if (e.target.checked) S.excluded.delete(k); else S.excluded.add(k);
+  reasonsChanged();
+});
+$('rsAll').addEventListener('click', () => { S.excluded.clear(); renderReasons(); reasonsChanged(); });
+$('rsNone').addEventListener('click', () => { reasonNames().forEach(x => S.excluded.add(x.k)); renderReasons(); reasonsChanged(); });
+document.addEventListener('click', e => { const dd = $('reasonDD'); if (dd.open && !dd.contains(e.target)) dd.open = false; });
 
 (function loadEmbedded() {
   const el = $('embedded'); if (!el) return;
   try {
     const snap = JSON.parse(el.textContent);
     S.repeats = snap.repeats; S.meta = snap.meta;
-    showReport();
+    showReport(snap.excluded);
     document.querySelector('.tagline').textContent = 'Designed by First Bus Franchise · Engineering · Snapshot ' + fmt(S.meta.generated);
   } catch (err) { console.error('Embedded data unreadable', err); }
 })();
