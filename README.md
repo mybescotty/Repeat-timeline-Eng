@@ -24,6 +24,7 @@ All processing happens in the browser. No data is uploaded anywhere.
 ## Outputs
 
 - **Print / PDF**: prints the current view (selected depot, search and filters) with every timeline expanded. Choose "Save as PDF" in the print dialog.
+- **🖨 PDF on each repeat**: prints / saves just that one bus + reason timeline. The PDF file name defaults to the bus, reason and date.
 - **Save shareable HTML**: downloads a self-contained snapshot of the results. Recipients open it in a browser without needing the CSVs, and can still filter by depot, search and print.
 
 ## Column detection

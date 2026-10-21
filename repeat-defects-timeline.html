@@ -34,6 +34,8 @@ header h1 { margin: 0; font-size: 18px; }
 .action-btn { background: #27ae60; color: #fff; border: none; border-radius: 5px; padding: 7px 14px; font-size: 13px; cursor: pointer; }
 .action-btn:hover { background: #219a52; }
 .action-btn:disabled { opacity: 0.4; cursor: default; }
+.pdf-btn { background: #27ae60; color: #fff; border: none; border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+.pdf-btn:hover { background: #219a52; }
 .badge-navy { background: #2D2A6E; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
 .badge-red  { background: #e74c3c; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
 .badge-amber{ background: #e67e22; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
@@ -154,6 +156,8 @@ main { padding: 16px 20px 40px; min-width: 0; }
   .chev { display: none; }
   .depot { break-before: page; }
   .depot.first { break-before: auto; }
+  body.print-one .depot:not(.has-target), body.print-one .repeat:not(.print-target), body.print-one .summary, body.print-one .depot-hdr span, body.print-one .report-meta .print-only { display: none !important; }
+  body.print-one .depot { break-before: auto; }
   .depot-hdr { border-radius: 0; }
   .repeat { break-inside: auto; }
   .repeat-hdr { break-after: avoid; cursor: default; }
@@ -528,7 +532,8 @@ function renderRepeat(r) {
   const title = r.notes || r.reason;
   const badges = [`<span class="badge-navy">${r.count}× repeat</span>`,
     r.lastOpen ? `<span class="badge-red">Latest call: no WO</span>` : `<span class="badge-green">Latest call: WO closed</span>`,
-    r.nff ? `<span class="badge-amber">${r.nff} NFF / OK</span>` : ''].join('');
+    r.nff ? `<span class="badge-amber">${r.nff} NFF / OK</span>` : '',
+    `<button class="pdf-btn no-print" title="Print / save just this repeat as PDF">🖨 PDF</button>`].join('');
   return `<div class="repeat${open ? ' expanded' : ''}${r.lastOpen ? ' open-wo' : ''}" data-key="${esc(k)}">
     <div class="repeat-hdr">
       <div class="repeat-title"><span class="chev">▶</span> ${esc(title)}</div>
@@ -585,6 +590,18 @@ function doPrint() {
   document.title = 'Repeat Defects - ' + (S.depot === 'ALL' ? 'All depots' : S.depot) + ' - ' + fmtDay(Date.now()).replace(/\//g, '-');
   setTimeout(() => { window.print(); document.title = t; S.expandAll = prev; render(); }, 50);
 }
+function printOne(card) {
+  const r = S.repeats.find(x => repKey(x) === card.dataset.key); if (!r) return;
+  card.classList.add('print-target'); card.closest('.depot').classList.add('has-target');
+  document.body.classList.add('print-one');
+  const t = document.title;
+  document.title = ('Repeat Defect - Bus ' + r.bus + ' - ' + r.reason + ' - ' + fmtDay(Date.now()).replace(/\//g, '-')).replace(/[\\/:*?"<>|]/g, '-');
+  setTimeout(() => {
+    window.print();
+    document.title = t; document.body.classList.remove('print-one');
+    card.classList.remove('print-target'); card.closest('.depot').classList.remove('has-target');
+  }, 50);
+}
 function doExport() {
   const strip = r => { const { _hs, ...rest } = r; return rest; };
   const snap = { v: 1, meta: S.meta, repeats: S.repeats.map(strip), excluded: [...S.excluded] };
@@ -615,6 +632,7 @@ $('btnExport').addEventListener('click', doExport);
 $('btnReload').addEventListener('click', () => { $('layout').classList.remove('show'); $('loader').style.display = ''; });
 $('depotNav').addEventListener('click', e => { const it = e.target.closest('.nav-item'); if (!it) return; S.depot = it.dataset.depot; render(); window.scrollTo(0, 0); });
 $('report').addEventListener('click', e => {
+  const pb = e.target.closest('.pdf-btn'); if (pb) { printOne(pb.closest('.repeat')); return; }
   const h = e.target.closest('.repeat-hdr'); if (!h) return;
   const card = h.parentElement; const k = card.dataset.key;
   if (card.classList.toggle('expanded')) S.expanded.add(k); else S.expanded.delete(k);
