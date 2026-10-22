@@ -109,6 +109,8 @@ main { padding: 16px 20px 40px; min-width: 0; }
 .ev.wo.nff .ev-card { background: var(--row-amber); border-color: rgba(243,156,18,0.4); }
 .ev.wo.uncleared .ev-card { background: #fff; border-color: rgba(231,76,60,0.5); }
 .ev.wo.uncleared::before { border-color: #e74c3c; }
+.ev.wo.top { margin-left: 0; }
+.ev.wo.top::before { left: -22px; width: 12px; height: 12px; border-width: 3px; top: 8px; }
 .ev.none .ev-card { background: #fff; border-style: dashed; color: #c0392b; }
 .ev.none::before { border-color: #e74c3c; left: -44px; width: 10px; height: 10px; border-width: 2px; top: 9px; }
 .ev.none { margin-left: 22px; }
@@ -183,18 +185,18 @@ main { padding: 16px 20px 40px; min-width: 0; }
 
 <section class="loader" id="loader">
   <div class="panel">
-    <h2>1. Load the two CSV files</h2>
+    <h2>1. Load the CSV files</h2>
     <p>Everything runs in your browser. No data leaves this computer.</p>
     <div class="drop-row">
       <div class="drop" id="dropCalls">
-        <strong>Defect / call log CSV</strong>
+        <strong>Call log CSV <span style="font-weight:400" id="callsOpt">(optional)</span></strong>
         <span>Status, Location, Call D/T, Reason, Bus No … Notes</span>
         <div class="fname" id="fnCalls">Click or drop file here</div>
         <input type="file" id="fileCalls" accept=".csv,text/csv" hidden>
       </div>
       <div class="drop" id="dropWO">
-        <strong>EAM driver defect (EDVC) CSV</strong>
-        <span>Equipment, Date Reported, Description, Driver Comments … Closing Comments, Cleared Date</span>
+        <strong>HxGN / EAM driver defect (EDVC) CSV</strong>
+        <span>Equipment, Date Reported, Driver Defect WOs, Description, Driver Comments … Closing Comments, Cleared Date</span>
         <div class="fname" id="fnWO">Click or drop file here</div>
         <input type="file" id="fileWO" accept=".csv,text/csv" hidden>
       </div>
@@ -203,8 +205,14 @@ main { padding: 16px 20px 40px; min-width: 0; }
   </div>
   <div class="panel">
     <h2>2. Settings</h2>
-    <p>A repeat is the same bus with the same reason logged more than once.</p>
+    <p id="modeHelp"></p>
     <div class="settings">
+      <label>Find repeats by
+        <select id="setMode" style="width:260px">
+          <option value="edvc">Same defect on the same bus (EDVC column H)</option>
+          <option value="calls">Call log: same bus + reason</option>
+        </select>
+      </label>
       <label>Min. occurrences to count as repeat
         <input type="number" id="setMin" min="2" value="2">
       </label>
@@ -212,10 +220,10 @@ main { padding: 16px 20px 40px; min-width: 0; }
         <input type="number" id="setSpan" min="0" value="0" title="0 = any time">
         <span style="font-size:10px">0 = any time</span>
       </label>
-      <label>Show EDVCs up to (days) after each call
+      <label id="woWinLbl">Show EDVCs up to (days) after each call
         <input type="number" id="setWOWin" min="0" value="7">
       </label>
-      <label>Only calls from (optional)
+      <label><span id="fromLbl">Only calls from (optional)</span>
         <input type="date" id="setFrom">
       </label>
     </div>
@@ -238,6 +246,7 @@ main { padding: 16px 20px 40px; min-width: 0; }
         <summary class="toggle-btn" id="reasonBtn">Reasons ▾</summary>
         <div class="reason-panel">
           <div class="rp-actions"><button class="toggle-btn" id="rsAll" type="button">Select all</button><button class="toggle-btn" id="rsNone" type="button">Clear all</button></div>
+          <div style="padding:0 10px 6px"><input type="search" id="rsFilter" placeholder="Find…" style="width:100%;border:1px solid var(--border);border-radius:5px;padding:4px 8px;font-size:12px;color:var(--text-primary)"></div>
           <div id="reasonList"></div>
         </div>
       </details>
@@ -253,12 +262,7 @@ main { padding: 16px 20px 40px; min-width: 0; }
     </div>
     <div class="report-meta" id="reportMeta"></div>
     <div class="summary" id="summary"></div>
-    <div class="legend">
-      <span class="lc">Call / defect reported (Sheet 1)</span>
-      <span class="lw">EDVC cleared (EAM)</span>
-      <span class="ln">Closed with no fault found / ok for service</span>
-      <span class="lx">No driver submitted EDVC found</span>
-    </div>
+    <div class="legend" id="legend"></div>
     <div id="report"></div>
   </main>
 </div>
@@ -291,7 +295,9 @@ const WO_COLS = {
   problem:  { names: ['problemdescription'], idx: 13 },
   closing:  { names: ['closingcomments', 'closingcomment', 'workperformedcomment', 'workperformed', 'comments', 'comment'], idx: 14 },
   action:   { names: ['actiondescription', 'action'], idx: 15 },
-  cleared:  { names: ['cleareddate', 'datecleared'], idx: 16 }
+  cleared:  { names: ['cleareddate', 'datecleared'], idx: 16 },
+  depot:    { names: ['depot'], idx: 1 },
+  opco:     { names: ['opconodesc', 'opco'], idx: 0 }
 };
 const NFF_RE = /\b(ok for service|okay for service|no fault|nff|n\.f\.f|nothing found|no defect|unable to (replicate|find|recreate)|could not (replicate|find|recreate)|cannot (replicate|find)|tested ok|checked\W*ok|all ok|checked and ok|working as (it )?should|working (ok|fine|correctly)|no issues?|no problems?)\b/i;
 const DAY = 86400000;
@@ -348,6 +354,16 @@ function parseDate(v) {
   if (/^\d{5}(\.\d+)?$/.test(v)) { const n = parseFloat(v); if (n > 20000 && n < 80000) { const d = new Date(Math.round((n - 25569) * DAY)); return d.getTime() + d.getTimezoneOffset() * 60000; } }
   const t = Date.parse(v); return isNaN(t) ? null : t;
 }
+// The EAM export mixes formats: days 1-12 come out as mm/dd/yyyy, later days as dd/mm/yyyy.
+// For ambiguous values pick whichever reading is closest to a reference time.
+function parseDateNear(v, ref, notBefore) {
+  const ts = parseDate(v); if (ts == null || ref == null) return ts;
+  const m = String(v).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})(.*)$/);
+  if (!m || +m[1] > 12 || +m[2] > 12 || m[1] === m[2]) return ts;
+  const alt = parseDate(`${m[2]}/${m[1]}/${m[3]}${m[4]}`); if (alt == null) return ts;
+  const score = t => Math.abs(t - ref) + (notBefore != null && t < notBefore ? 1e13 : 0);
+  return score(alt) < score(ts) ? alt : ts;
+}
 function busKey(v) {
   const s = String(v || '').trim().toUpperCase(); if (!s) return '';
   const m = s.match(/\d{3,}/); if (m) return m[0].replace(/^0+(?=\d)/, '');
@@ -400,18 +416,29 @@ const dayStart = ts => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return 
 function readWOs(rows) {
   const map = mapColumns(rows[0], WO_COLS); const out = [];
   const g = (r, k) => map[k] >= 0 ? (r[map[k]] || '').trim() : '';
+  const pre = [];
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i]; const bus = g(r, 'bus'); if (!bus) continue;
-    const notes = parseDriverNotes(g(r, 'driver'));
-    const day = parseDate(g(r, 'reported'));
+    const raw = g(r, 'driver'); const notes = parseDriverNotes(raw);
     // Exact time from the first driver note (UTC); otherwise the reported date only
     const noteTs = notes.reduce((m, n) => n.ts != null && (m == null || n.ts < m) ? n.ts : m, null);
+    pre.push({ r, bus, raw, notes, noteTs });
+  }
+  const noteTimes = pre.map(x => x.noteTs).filter(t => t != null).sort((a, b) => a - b);
+  const median = noteTimes.length ? noteTimes[noteTimes.length >> 1] : null;
+  for (const { r, bus, raw, notes, noteTs } of pre) {
+    const day = parseDateNear(g(r, 'reported'), noteTs ?? median);
     const ts = noteTs ?? day;
-    const action = g(r, 'action'), closing = g(r, 'closing');
-    out.push({ wo: g(r, 'wo'), bk: busKey(bus), ts, dateOnly: noteTs == null && !/\d:\d/.test(g(r, 'reported')),
-      type: g(r, 'type'), defect: g(r, 'defect'), notes: notes.map(n => n.text).filter(Boolean), rdwy: /^y/i.test(g(r, 'rdwy')),
+    const action = g(r, 'action'), closing = g(r, 'closing'), category = g(r, 'defect');
+    // Defect item = column H text before " - Note n (", else the part of Description after the category
+    const hm = raw.match(/^(.*?)\s+-\s+Note \d+ \(/);
+    const item = (hm ? hm[1] : category.includes('-') ? category.slice(category.indexOf('-') + 1) : category || g(r, 'type') || 'Unknown').trim();
+    const opco = g(r, 'opco').replace(/^\d+\s*-\s*/, '').replace(/\s+(Ltd|Limited)\.?$/i, '');
+    out.push({ wo: g(r, 'wo'), bus, bk: busKey(bus), ts, dateOnly: noteTs == null && !/\d:\d/.test(g(r, 'reported')),
+      type: g(r, 'type'), defect: category, item, notes: notes.map(n => n.text).filter(Boolean), rdwy: /^y/i.test(g(r, 'rdwy')),
       status: g(r, 'status'), priority: g(r, 'priority'), assigned: g(r, 'assigned'), problem: g(r, 'problem'),
-      closing, action, cleared: parseDate(g(r, 'cleared')), nff: /no fault/i.test(action) || NFF_RE.test(closing) });
+      depot: g(r, 'depot') ? 'Depot ' + g(r, 'depot') + (opco ? ' · ' + opco : '') : (opco || 'Unknown'),
+      closing, action, cleared: ts == null ? parseDate(g(r, 'cleared')) : parseDateNear(g(r, 'cleared'), ts, dayStart(ts)), nff: /no fault/i.test(action) || NFF_RE.test(closing) });
   }
   return { rows: out, map, header: rows[0] };
 }
@@ -431,18 +458,46 @@ function buildRepeats(calls, wos, opt) {
   const repeats = [];
   for (const list of groups.values()) {
     list.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
-    // split into chains where consecutive calls are within the max gap
-    const chains = []; let cur = [];
-    for (const c of list) {
-      if (cur.length && opt.span > 0 && c.ts != null && cur[cur.length - 1].ts != null && c.ts - cur[cur.length - 1].ts > opt.span * DAY) { chains.push(cur); cur = []; }
-      cur.push(c);
-    }
-    if (cur.length) chains.push(cur);
-    for (const ch of chains) if (ch.length >= opt.min) repeats.push(makeRepeat(ch, woByBus.get(ch[0].bk) || [], opt));
+    for (const ch of chainsOf(list, opt)) if (ch.length >= opt.min) repeats.push(makeRepeat(ch, woByBus.get(ch[0].bk) || [], opt));
   }
   return repeats;
 }
 
+// Split a time-sorted list into runs whose consecutive items are within opt.span days
+function chainsOf(list, opt) {
+  const chains = []; let cur = [];
+  for (const c of list) {
+    if (cur.length && opt.span > 0 && c.ts != null && cur[cur.length - 1].ts != null && c.ts - cur[cur.length - 1].ts > opt.span * DAY) { chains.push(cur); cur = []; }
+    cur.push(c);
+  }
+  if (cur.length) chains.push(cur);
+  return chains;
+}
+function buildEdvcRepeats(wos, opt, calls) {
+  const fromTs = opt.from ? parseDate(opt.from) : null;
+  // Depot names from the call log (latest Location per bus) when it's loaded
+  const callDepot = new Map();
+  for (const c of [...(calls || [])].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0))) callDepot.set(c.bk, c.depot);
+  const groups = new Map();
+  for (const w of wos) {
+    if (w.ts == null || (fromTs != null && w.ts < fromTs)) continue;
+    const k = w.bk + '|' + reasonKey(w.item);
+    if (!groups.has(k)) groups.set(k, []); groups.get(k).push(w);
+  }
+  const repeats = [];
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.ts - b.ts);
+    for (const ch of chainsOf(list, opt)) {
+      if (ch.length < opt.min) continue;
+      const last = ch[ch.length - 1];
+      repeats.push({ mode: 'edvc', bus: last.bus, bk: last.bk, reason: last.item, category: last.defect, depot: callDepot.get(last.bk) || last.depot,
+        notes: last.closing, first: ch[0].ts, last: last.ts, count: ch.length, woCount: ch.length,
+        nff: ch.filter(w => w.nff).length, lastOpen: last.cleared == null,
+        events: ch.map((w, i) => ({ w: { ...w, clearedAfter: w.cleared != null ? w.cleared - dayStart(w.ts) : null }, gap: i ? w.ts - ch[i - 1].ts : null })) });
+    }
+  }
+  return repeats;
+}
 function makeRepeat(chain, busWOs, opt) {
   const last = chain[chain.length - 1];
   const events = []; let nff = 0, woCount = 0, unclosed = 0;
@@ -492,7 +547,7 @@ function loadFile(file, kind) {
       (kind === 'calls' ? $('dropCalls') : $('dropWO')).classList.add('ok');
     } catch (err) { fn.innerHTML = `<span class="err">${esc(err.message)}</span>`; }
     showColMap();
-    $('btnBuild').disabled = !(S.calls && S.wos);
+    updateMode();
   };
   rd.readAsArrayBuffer(file);
 }
@@ -504,15 +559,25 @@ function showColMap() {
   };
   $('colmap').innerHTML = part(S.calls, CALL_COLS, 'Calls') + part(S.wos, WO_COLS, 'EDVC');
 }
+function updateMode() {
+  const edvc = $('setMode').value === 'edvc';
+  $('btnBuild').disabled = !(S.wos && (edvc || S.calls));
+  $('callsOpt').textContent = edvc ? '(optional: names the depots)' : '(required)';
+  $('woWinLbl').style.display = edvc ? 'none' : '';
+  $('fromLbl').textContent = edvc ? 'Only EDVCs from (optional)' : 'Only calls from (optional)';
+  $('modeHelp').textContent = edvc
+    ? 'A repeat is the same bus with the same defect (the item at the start of Driver Comments, column H) reported more than once. Different defects on the same bus are not repeats.'
+    : 'A repeat is the same bus with the same call log reason logged more than once, with the EDVCs raised after each call shown underneath.';
+}
 function readSettings() {
-  return { min: Math.max(2, +$('setMin').value || 2), span: Math.max(0, +$('setSpan').value || 0), woWin: Math.max(0, +$('setWOWin').value || 0), from: $('setFrom').value };
+  return { mode: $('setMode').value, min: Math.max(2, +$('setMin').value || 2), span: Math.max(0, +$('setSpan').value || 0), woWin: Math.max(0, +$('setWOWin').value || 0), from: $('setFrom').value };
 }
 function build() {
   const opt = readSettings();
   $('buildMsg').textContent = 'Working…';
   setTimeout(() => {
-    S.repeats = buildRepeats(S.calls.rows, S.wos.rows, opt);
-    S.meta = { generated: Date.now(), files: { ...S.files }, nCalls: S.calls.rows.length, nWOs: S.wos.rows.length, opt };
+    S.repeats = opt.mode === 'edvc' ? buildEdvcRepeats(S.wos.rows, opt, S.calls && S.calls.rows) : buildRepeats(S.calls.rows, S.wos.rows, opt);
+    S.meta = { generated: Date.now(), files: { calls: S.calls ? S.files.calls : '', wo: S.files.wo }, nCalls: S.calls ? S.calls.rows.length : 0, nWOs: S.wos.rows.length, opt };
     $('buildMsg').textContent = '';
     showReport();
   }, 20);
@@ -520,7 +585,7 @@ function build() {
 function showReport(excluded) {
   S.depot = 'ALL'; S.expanded.clear();
   if (excluded) S.excluded = new Set(excluded);
-  else try { S.excluded = new Set(JSON.parse(localStorage.getItem('rdt-excluded-reasons') || '[]')); } catch (e) { S.excluded = new Set(); }
+  else try { S.excluded = new Set(JSON.parse(localStorage.getItem(exclKey()) || '[]')); } catch (e) { S.excluded = new Set(); }
   renderReasons();
   $('loader').style.display = 'none'; $('layout').classList.add('show');
   $('btnReload').style.display = ''; $('btnPrint').disabled = false; $('btnExport').disabled = false;
@@ -528,9 +593,12 @@ function showReport(excluded) {
 }
 
 /* ===== §6 Rendering ===== */
+const isEdvc = () => S.meta && S.meta.opt.mode === 'edvc';
+const exclKey = () => isEdvc() ? 'rdt-excluded-defects' : 'rdt-excluded-reasons';
 const repKey = r => r.bk + '|' + reasonKey(r.reason) + '|' + r.first;
 function haystack(r) {
-  if (!r._hs) r._hs = [r.bus, r.reason, r.depot, r.vtype, ...r.events.flatMap(e => [e.call.notes, e.call.route, e.call.driver, ...e.wos.flatMap(w => [w.wo, w.defect, w.closing, w.action, w.problem, w.assigned, ...w.notes])])].join(' ').toLowerCase();
+  const wf = w => [w.wo, w.defect, w.closing, w.action, w.problem, w.assigned, ...w.notes];
+  if (!r._hs) r._hs = [r.bus, r.reason, r.depot, r.vtype, r.category, ...r.events.flatMap(e => e.w ? wf(e.w) : [e.call.notes, e.call.route, e.call.driver, ...e.wos.flatMap(wf)])].join(' ').toLowerCase();
   return r._hs;
 }
 function filtered(ignoreDepot) {
@@ -551,16 +619,20 @@ function render() {
 
   const list = filtered(false);
   const m = S.meta, o = m.opt;
-  $('reportMeta').innerHTML = `Sources: <b>${esc(m.files.calls)}</b> (${m.nCalls.toLocaleString()} calls) · <b>${esc(m.files.wo)}</b> (${m.nWOs.toLocaleString()} EDVCs) · Generated ${fmt(m.generated)}<br>
-    Repeat = same bus + same reason ≥ ${o.min} times${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, calls from ${fmtDay(parseDate(o.from))}` : ''} · EDVCs shown from the call day up to ${o.woWin} days after each call
-    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? ' · no EDVC only' : ''}${S.excluded.size ? ' · reasons excluded: ' + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
+  const ed = o.mode === 'edvc';
+  $('reportMeta').innerHTML = `Sources: ${m.files.calls ? `<b>${esc(m.files.calls)}</b> (${m.nCalls.toLocaleString()} calls) · ` : ''}<b>${esc(m.files.wo)}</b> (${m.nWOs.toLocaleString()} EDVCs) · Generated ${fmt(m.generated)}<br>
+    ${ed ? `Repeat = same bus + same defect (EDVC column H) ≥ ${o.min} times` : `Repeat = same bus + same reason ≥ ${o.min} times`}${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, ${ed ? 'EDVCs' : 'calls'} from ${fmtDay(parseDate(o.from))}` : ''}${ed ? '' : ` · EDVCs shown from the call day up to ${o.woWin} days after each call`}
+    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? (ed ? ' · latest not cleared only' : ' · no EDVC only') : ''}${S.excluded.size ? (ed ? ' · defects excluded: ' : ' · reasons excluded: ') + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
   const buses = new Set(list.map(r => r.bk)).size;
   const calls = list.reduce((s, r) => s + r.count, 0);
   const open = list.filter(r => r.lastOpen).length;
   const nff = list.reduce((s, r) => s + r.nff, 0);
-  $('summary').innerHTML = [[list.length, 'Repeat defects'], [buses, 'Buses'], [calls, 'Calls involved'], [open, 'Latest call no EDVC'], [nff, 'NFF / OK closures']]
+  $('summary').innerHTML = [[list.length, 'Repeat defects'], [buses, 'Buses'], [calls, ed ? 'EDVCs involved' : 'Calls involved'], [open, ed ? 'Latest not cleared' : 'Latest call no EDVC'], [nff, 'NFF / OK closures']]
     .map(([v, l]) => `<div class="stat"><div class="v">${v.toLocaleString()}</div><div class="l">${l}</div></div>`).join('');
 
+  $('tglOpen').textContent = ed ? 'Latest not cleared only' : 'No EDVC only';
+  $('legend').innerHTML = (ed ? '' : '<span class="lc">Call reported (call log)</span>') + '<span class="lw">EDVC cleared</span><span class="ln">No fault found / ok for service</span>'
+    + (ed ? '<span class="lx">Not cleared yet</span>' : '<span class="lx">No driver submitted EDVC found</span>');
   if (!list.length) { $('report').innerHTML = `<div class="empty">No repeat defects match the current filters.</div>`; return; }
   const byDepot = new Map();
   for (const r of list) { if (!byDepot.has(r.depot)) byDepot.set(r.depot, []); byDepot.get(r.depot).push(r); }
@@ -573,6 +645,7 @@ function render() {
   $('report').innerHTML = html;
 }
 function renderRepeat(r) {
+  if (r.mode === 'edvc') return renderEdvcRepeat(r);
   const k = repKey(r);
   const open = S.expandAll || S.expanded.has(k);
   const title = r.notes || r.reason;
@@ -589,6 +662,37 @@ function renderRepeat(r) {
     <div class="repeat-body"><div class="timeline">${r.events.map(renderEvent).join('')}</div></div>
   </div>`;
 }
+function renderEdvcRepeat(r) {
+  const k = repKey(r);
+  const open = S.expandAll || S.expanded.has(k);
+  const badges = [`<span class="badge-navy">${r.count}× repeat</span>`,
+    r.lastOpen ? `<span class="badge-red">Latest: not cleared</span>` : `<span class="badge-green">Latest: cleared</span>`,
+    r.nff ? `<span class="badge-amber">${r.nff} NFF / OK</span>` : '',
+    `<button class="pdf-btn no-print" title="Print / save just this repeat as PDF">🖨 PDF</button>`].join('');
+  return `<div class="repeat${open ? ' expanded' : ''}${r.lastOpen ? ' open-wo' : ''}" data-key="${esc(k)}">
+    <div class="repeat-hdr">
+      <div class="repeat-title"><span class="chev">▶</span> ${esc(r.reason)} <span style="font-weight:400;color:var(--text-secondary)">— Bus ${esc(r.bus)}</span></div>
+      <div class="repeat-badges">${badges}</div>
+      <div class="repeat-sub">${r.category ? `<span>${esc(r.category)}</span>` : ''}<span>${fmtDay(r.first)} → ${fmtDay(r.last)}</span><span>${r.count} EDVCs</span><span>Latest closing: <b>${r.notes ? esc(r.notes) : '—'}</b></span></div>
+    </div>
+    <div class="repeat-body"><div class="timeline">${r.events.map((e, i) =>
+      (i ? `<div class="gap">↻ Same defect reported again ${e.gap != null ? dur(e.gap) + ' later' : ''}</div>` : '') +
+      edvcCard(e.w, 'top', `#${i + 1}`, w => w.clearedAfter < DAY ? ' (same day)' : ` (${Math.floor(w.clearedAfter / DAY)} day${Math.floor(w.clearedAfter / DAY) === 1 ? '' : 's'} after report)`)).join('')}</div></div>
+  </div>`;
+}
+function edvcCard(w, cls, when, clearedSuffix) {
+  const badges = [w.type && w.type !== 'Driver Defect' ? `<span class="badge-navy">${esc(w.type)}</span>` : '',
+    w.rdwy ? '<span class="badge-red">Roadworthiness</span>' : '', /vor/i.test(w.priority + w.status) ? '<span class="badge-red">VOR</span>' : '',
+    w.cleared == null ? `<span class="badge-red">Not cleared${w.status ? ' · ' + esc(w.status) : ''}</span>` : '',
+    w.nff ? '<span class="badge-amber">NFF / OK</span>' : ''].join('');
+  return `<div class="ev wo ${cls}${w.nff ? ' nff' : ''}${w.cleared == null ? ' uncleared' : ''}"><div class="ev-card">
+    <div class="ev-top"><span class="ev-date">${w.dateOnly ? fmtDay(w.ts) : fmt(w.ts)}</span><span class="ev-kind">${w.wo ? 'WO ' + esc(w.wo) : 'EDVC'}${w.defect ? ' · ' + esc(w.defect) : ''}</span><span class="ev-meta" style="margin:0">${esc(when)}</span>${badges}</div>
+    ${w.notes.length ? `<div class="ev-text"><b>Driver:</b> ${w.notes.map(esc).join('<br>')}</div>` : ''}
+    <div class="ev-head">Closing: ${w.closing ? esc(w.closing) : '<i style="opacity:.6">No closing comment</i>'}</div>
+    <div class="ev-meta">${[w.action && 'Action: ' + w.action, w.problem && 'Problem: ' + w.problem, w.assigned && 'By ' + w.assigned,
+      w.cleared != null && 'Cleared ' + fmtDay(w.cleared) + (w.clearedAfter != null ? clearedSuffix(w) : '')].filter(Boolean).map(esc).join(' · ')}</div>
+  </div></div>`;
+}
 function renderEvent(e, i) {
   const c = e.call;
   let h = '';
@@ -601,17 +705,7 @@ function renderEvent(e, i) {
   if (!e.wos.length) h += `<div class="ev none"><div class="ev-card">No driver submitted EDVC found</div></div>`;
   for (const w of e.wos) {
     const when = w.dateOnly ? 'reported ' + (dayStart(w.ts) === dayStart(c.ts) ? 'same day' : dur(w.ts - dayStart(c.ts)) + ' after call day') : 'reported ' + rel(w.after) + ' call';
-    const badges = [w.type && w.type !== 'Driver Defect' ? `<span class="badge-navy">${esc(w.type)}</span>` : '',
-      w.rdwy ? '<span class="badge-red">Roadworthiness</span>' : '', /vor/i.test(w.priority + w.status) ? '<span class="badge-red">VOR</span>' : '',
-      w.cleared == null ? `<span class="badge-red">Not cleared${w.status ? ' · ' + esc(w.status) : ''}</span>` : '',
-      w.nff ? '<span class="badge-amber">NFF / OK</span>' : ''].join('');
-    h += `<div class="ev wo${w.nff ? ' nff' : ''}${w.cleared == null ? ' uncleared' : ''}"><div class="ev-card">
-    <div class="ev-top"><span class="ev-date">${w.dateOnly ? fmtDay(w.ts) : fmt(w.ts)}</span><span class="ev-kind">EDVC${w.wo ? ' ' + esc(w.wo) : ''}${w.defect ? ' · ' + esc(w.defect) : ''}</span><span class="ev-meta" style="margin:0">${when}</span>${badges}</div>
-    ${w.notes.length ? `<div class="ev-text"><b>Driver:</b> ${w.notes.map(esc).join('<br>')}</div>` : ''}
-    <div class="ev-head">Closing: ${w.closing ? esc(w.closing) : '<i style="opacity:.6">No closing comment</i>'}</div>
-    <div class="ev-meta">${[w.action && 'Action: ' + w.action, w.problem && 'Problem: ' + w.problem, w.assigned && 'By ' + w.assigned,
-      w.cleared != null && 'Cleared ' + fmtDay(w.cleared) + (w.clearedAfter != null ? (w.clearedAfter < DAY ? ' (same day as call)' : ` (${Math.floor(w.clearedAfter / DAY)} day${Math.floor(w.clearedAfter / DAY) === 1 ? '' : 's'} after call)`) : '')].filter(Boolean).map(esc).join(' · ')}</div>
-  </div></div>`;
+    h += edvcCard(w, '', when, w => w.clearedAfter < DAY ? ' (same day as call)' : ` (${Math.floor(w.clearedAfter / DAY)} day${Math.floor(w.clearedAfter / DAY) === 1 ? '' : 's'} after call)`);
   }
   return h;
 }
@@ -631,11 +725,11 @@ function renderReasons() {
 }
 function updateReasonBtn(total) {
   const n = total ?? reasonNames().length;
-  $('reasonBtn').textContent = `Reasons (${n - S.excluded.size}/${n}) ▾`;
+  $('reasonBtn').textContent = `${isEdvc() ? 'Defects' : 'Reasons'} (${n - S.excluded.size}/${n}) ▾`;
   $('reasonBtn').classList.toggle('active', S.excluded.size > 0);
 }
 function reasonsChanged() {
-  try { localStorage.setItem('rdt-excluded-reasons', JSON.stringify([...S.excluded])); } catch (e) {}
+  try { localStorage.setItem(exclKey(), JSON.stringify([...S.excluded])); } catch (e) {}
   updateReasonBtn(); render();
 }
 
@@ -703,6 +797,12 @@ $('reasonList').addEventListener('change', e => {
 });
 $('rsAll').addEventListener('click', () => { S.excluded.clear(); renderReasons(); reasonsChanged(); });
 $('rsNone').addEventListener('click', () => { reasonNames().forEach(x => S.excluded.add(x.k)); renderReasons(); reasonsChanged(); });
+$('rsFilter').addEventListener('input', e => {
+  const q = e.target.value.trim().toLowerCase();
+  $('reasonList').querySelectorAll('label').forEach(l => { l.style.display = !q || l.textContent.toLowerCase().includes(q) ? '' : 'none'; });
+});
+$('setMode').addEventListener('change', updateMode);
+updateMode();
 document.addEventListener('click', e => { const dd = $('reasonDD'); if (dd.open && !dd.contains(e.target)) dd.open = false; });
 
 (function loadEmbedded() {
