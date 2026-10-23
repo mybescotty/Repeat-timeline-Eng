@@ -286,7 +286,9 @@ const CALL_COLS = {
   status:   { names: ['status', 'callstatus'], idx: 0 },
   depot:    { names: ['location', 'depot', 'garage', 'site'], idx: 1 },
   callDT:   { names: ['calldt', 'calldatetime', 'calldate', 'datetimeofcall', 'callreceived', 'calldatetimereceived'], idx: 2 },
-  callTime: { names: ['calltime', 'timeofcall', 'time', 'calltimereceived'], idx: -1 },
+  callTime: { names: ['starttime', 'breakdowntime', 'calltime', 'timeofcall', 'time', 'calltimereceived'], idx: -1 },
+  incident: { names: ['incidentdate', 'incidentdt', 'incidentdatetime'], idx: -1 },
+  varNotes: { names: ['varnotes', 'varnote'], idx: -1 },
   reason:   { names: ['reason', 'fault', 'defect', 'defectreason'], idx: 3 },
   bus:      { names: ['busno', 'busnumber', 'bus', 'fleetno', 'fleetnum', 'fleetnumber'], idx: 4 },
   vtype:    { names: ['vehicletype', 'type'], idx: 5 },
@@ -377,12 +379,19 @@ const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 function mapColumns(header, spec) {
   const h = header.map(norm); const map = {}; const used = new Set();
-  for (const [key, def] of Object.entries(spec)) {
-    let found = -1;
-    for (const n of def.names) { const i = h.findIndex((x, j) => x === n && !used.has(j)); if (i >= 0) { found = i; break; } }
-    if (found < 0) for (const n of def.names) { if (n.length < 4) continue; const i = h.findIndex((x, j) => x.startsWith(n) && !used.has(j)); if (i >= 0) { found = i; break; } }
-    if (found < 0 && def.idx < header.length && !used.has(def.idx)) found = def.idx;
-    map[key] = found; if (found >= 0) used.add(found);
+  const entries = Object.entries(spec);
+  // Exact header names first, then prefixes, and column letters only for whatever is still missing,
+  // so a fallback can never take a column that another field is named in
+  for (const [key, def] of entries)
+    for (const n of def.names) { const i = h.findIndex((x, j) => x === n && !used.has(j)); if (i >= 0) { map[key] = i; used.add(i); break; } }
+  for (const [key, def] of entries) {
+    if (key in map) continue;
+    for (const n of def.names) { if (n.length < 4) continue; const i = h.findIndex((x, j) => x.startsWith(n) && !used.has(j)); if (i >= 0) { map[key] = i; used.add(i); break; } }
+  }
+  for (const [key, def] of entries) {
+    if (key in map) continue;
+    map[key] = def.idx >= 0 && def.idx < header.length && !used.has(def.idx) ? def.idx : -1;
+    if (map[key] >= 0) used.add(map[key]);
   }
   return map;
 }
@@ -433,35 +442,57 @@ const rel = ms => ms < 0 ? dur(-ms) + ' before' : dur(ms) + ' after';
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /* ===== §4 Loading + processing ===== */
+// Time of day from a START_TIME value: "14:35", "14:35:00", "2:35 pm", an Excel fraction (0.607),
+// "1899-12-30T14:35:00" (Excel time-only) or a full date/time. Returns { ms, date } or null when
+// there is no usable time (blank, 00:00, out of range).
+function breakdownTime(v) {
+  v = String(v || '').trim(); if (!v) return null;
+  let date = null, hh, mm, ss = 0, m;
+  if (/^\d*\.\d+$/.test(v) || /^\d{5}(\.\d+)?$/.test(v)) {
+    const n = parseFloat(v), whole = Math.floor(n), frac = n - whole;
+    if (whole > 20000) { const d = parseDate(String(whole)); date = d == null ? null : dayStart(d); }
+    const mins = Math.round(frac * 1440); hh = Math.floor(mins / 60); mm = mins % 60;
+  } else if ((m = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?/))) {
+    if (+m[1] > 1900) date = new Date(+m[1], +m[2] - 1, +m[3]).getTime();
+    hh = +m[4]; mm = +m[5]; ss = +(m[6] || 0);
+  } else if ((m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})[ T,]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i))) {
+    let y = +m[3]; if (y < 100) y += 2000;
+    if (y > 1900) date = new Date(y, +m[2] - 1, +m[1]).getTime();
+    hh = +m[4]; mm = +m[5]; ss = +(m[6] || 0);
+    if (m[7]) { if (/pm/i.test(m[7]) && hh < 12) hh += 12; if (/am/i.test(m[7]) && hh === 12) hh = 0; }
+  } else if ((m = v.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/i))) {
+    hh = +m[1]; mm = +m[2]; ss = +(m[3] || 0);
+    if (m[4]) { if (/pm/i.test(m[4]) && hh < 12) hh += 12; if (/am/i.test(m[4]) && hh === 12) hh = 0; }
+  } else return null;
+  if (!(hh >= 0 && hh < 24 && mm >= 0 && mm < 60) || (hh === 0 && mm === 0 && !ss)) return null;
+  return { ms: ((hh * 60 + mm) * 60 + ss) * 1000, date };
+}
 function readCalls(rows) {
   const map = mapColumns(rows[0], CALL_COLS); const out = [];
   const g = (r, k) => map[k] >= 0 ? (r[map[k]] || '').trim() : '';
   // An exact midnight is how Excel writes a date with no time, so it counts as "no time"
+  // An exact midnight is how Excel writes a date with no time, so it counts as "no time"
   const hasTime = v => (/\d:\d\d/.test(v) && !/(^|\D)0?0:00(:00)?(\D|$)/.test(v)) || /^\d{5}\.\d+$/.test(v);
-  let fromTimeCol = 0, fromOtherCol = 0, noTime = 0;
+  let fromStart = 0, badStart = 0, noTime = 0;
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i]; const bus = g(r, 'bus'); const reason = g(r, 'reason'); const category = g(r, 'lostMiles');
     if (!bus || !(reason || category)) continue;
-    let raw = g(r, 'callDT'), ts = parseDate(raw), timeFrom = '';
-    if (ts != null && !hasTime(raw)) {
-      // Time held in its own column ("17:53", "17:53:00" or an Excel day fraction)
-      const t = g(r, 'callTime'); const tm = t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-      const frac = /^0?\.\d+$/.test(t) ? parseFloat(t) : null;
-      if (tm && !(+tm[1] === 0 && +tm[2] === 0)) { ts = dayStart(ts) + ((+tm[1]) * 60 + (+tm[2])) * 60000 + (+(tm[3] || 0)) * 1000; timeFrom = 'col'; }
-      else if (frac != null) { ts = dayStart(ts) + Math.round(frac * DAY / 60000) * 60000; timeFrom = 'col'; }
-      else {
-        // Otherwise borrow the time from another date/time on the row for the same day (e.g. Status D/T)
-        for (let j = 0; j < r.length; j++) {
-          if (j === map.callDT || !hasTime(r[j] || '')) continue;
-          const o = parseDate(r[j]); if (o != null && dayStart(o) === dayStart(ts)) { ts = o; timeFrom = 'row:' + (rows[0][j] || 'col ' + (j + 1)); break; }
-        }
-      }
-      if (!timeFrom) noTime++; else if (timeFrom === 'col') fromTimeCol++; else fromOtherCol++;
+    const raw = g(r, 'callDT') || g(r, 'incident');
+    let ts = parseDate(g(r, 'callDT')) ?? parseDate(g(r, 'incident')), dateOnly = false, timeFrom = '';
+    // Breakdown time from START_TIME (column L); ignored when blank, 00:00 or otherwise not a real time
+    const st = g(r, 'callTime'), t = breakdownTime(st);
+    if (t && ts == null && t.date != null) ts = t.date;
+    if (t && ts != null && (t.date == null || Math.abs(t.date - dayStart(ts)) <= DAY)) { ts = dayStart(ts) + t.ms; timeFrom = 'start'; fromStart++; }
+    else {
+      if (st) badStart++;
+      if (ts != null && !hasTime(g(r, 'callDT'))) { ts = dayStart(ts); dateOnly = true; noTime++; }
     }
-    out.push({ status: g(r, 'status'), depot: g(r, 'depot') || 'Unknown', raw, ts, dateOnly: ts != null && !hasTime(raw) && !timeFrom, timeFrom,
-      reason, category, bus, bk: busKey(bus), vtype: g(r, 'vtype'), driver: g(r, 'driver'), route: g(r, 'route'), notes: g(r, 'notes') });
+    const varNotes = g(r, 'varNotes');
+    out.push({ status: g(r, 'status'), depot: g(r, 'depot') || 'Unknown', raw, ts, dateOnly, timeFrom,
+      reason, category, bus, bk: busKey(bus), vtype: g(r, 'vtype'), driver: g(r, 'driver'), route: g(r, 'route'), notes: g(r, 'notes') || varNotes,
+      varNotes: varNotes && varNotes !== g(r, 'notes') ? varNotes : '' });
   }
-  return { rows: out, map, header: rows[0], timeInfo: { fromTimeCol, fromOtherCol, noTime } };
+  return { rows: out, map, header: rows[0], timeInfo: { fromStart, badStart, noTime } };
 }
 // Driver comments hold one or more "Note n (2026-10-16T22:49:56 UTC - Driver 123):text" entries,
 // often repeated by "Ticketer Portal update"; return the unique note texts with their times.
@@ -594,7 +625,10 @@ function makeRepeat(chain, busWOs, opt) {
     const woEvents = shownPer[i].map(w => { if (w.nff) nff++; woCount++; return prep(w, c); });
     const others = perCall[i].filter(w => !shownPer[i].includes(w)).map(w => ({ ...prep(w, c), rep: 1 }));
     if (!woEvents.length) unclosed++;
-    events.push({ call: c, gap: i > 0 && c.ts != null && chain[i - 1].ts != null ? c.ts - chain[i - 1].ts : null, wos: woEvents, total: perCall[i].length, others });
+    const prev = chain[i - 1];
+    // Whole calendar days when either call has no time, so a date-only call isn't measured from midnight
+    const gap = i > 0 && c.ts != null && prev.ts != null ? (c.dateOnly || prev.dateOnly ? dayStart(c.ts) - dayStart(prev.ts) : c.ts - prev.ts) : null;
+    events.push({ call: c, gap, wos: woEvents, total: perCall[i].length, others });
   });
   const repeating = [...itemCount.entries()].filter(([, n]) => n >= 2).map(([k, n]) => ({ name: shownPer.flat().find(w => reasonKey(w.item) === k).item, n })).sort((a, b) => b.n - a.n);
   // Depot is where the bus was most recently reported
@@ -647,8 +681,9 @@ function showColMap() {
   let warn = '';
   if (S.calls) {
     const t = S.calls.timeInfo, n = S.calls.rows.length;
-    if (t.noTime) warn += `<div style="margin-top:6px">ℹ ${t.noTime.toLocaleString()} of ${n.toLocaleString()} calls have no time recorded, so they show the date only.</div>`;
-    if (t.fromOtherCol) warn += `<div style="margin-top:6px">ℹ ${t.fromOtherCol.toLocaleString()} call times were taken from another date/time column on the same day (e.g. Status D/T) because the call date had no time.</div>`;
+    const col = S.calls.map.callTime >= 0 ? esc(S.calls.header[S.calls.map.callTime] || 'column L') : 'START_TIME';
+    if (t.fromStart) warn += `<div style="margin-top:6px">ℹ ${t.fromStart.toLocaleString()} of ${n.toLocaleString()} calls use the breakdown time from ${col}.</div>`;
+    if (t.noTime) warn += `<div style="margin-top:6px">ℹ ${t.noTime.toLocaleString()} of ${n.toLocaleString()} calls have no valid time${t.badStart ? ` (${col} blank, 00:00 or not a time)` : ''}, so they show the date only.</div>`;
   }
   $('colmap').innerHTML = part(S.calls, CALL_COLS, 'Calls') + part(S.wos, WO_COLS, 'EDVC') + warn;
 }
@@ -692,7 +727,7 @@ const exclKey = () => isEdvc() ? 'rdt-excluded-defects' : 'rdt-excluded-reasons'
 const repKey = r => r.bk + '|' + reasonKey(r.reason) + '|' + r.first;
 function haystack(r) {
   const wf = w => [w.wo, w.defect, w.closing, w.action, w.problem, w.assigned, ...w.notes];
-  if (!r._hs) r._hs = [r.bus, r.reason, r.depot, r.vtype, r.category, ...r.events.flatMap(e => e.w ? wf(e.w) : [e.call.notes, e.call.route, e.call.driver, ...e.wos.flatMap(wf)])].join(' ').toLowerCase();
+  if (!r._hs) r._hs = [r.bus, r.reason, r.depot, r.vtype, r.category, ...r.events.flatMap(e => e.w ? wf(e.w) : [e.call.notes, e.call.varNotes, e.call.route, e.call.driver, ...e.wos.flatMap(wf)])].join(' ').toLowerCase();
   return r._hs;
 }
 function filtered(ignoreDepot) {
@@ -790,10 +825,11 @@ function edvcCard(w, cls, when, clearedSuffix) {
 function renderEvent(e, i) {
   const c = e.call;
   let h = '';
-  if (i > 0) h += `<div class="gap">↻ Repeated ${e.gap != null ? dur(e.gap) + ' later' : ''}</div>`;
+  if (i > 0) h += `<div class="gap">↻ Repeated ${e.gap != null ? (e.gap === 0 ? 'the same day' : dur(e.gap) + ' later') : ''}</div>`;
   h += `<div class="ev call"><div class="ev-card">
-    <div class="ev-top"><span class="ev-date">${c.ts != null ? (c.dateOnly ? fmtDay(c.ts) : fmt(c.ts)) : esc(c.raw || 'No date')}</span>${c.timeFrom && c.timeFrom.startsWith('row:') ? `<span class="ev-meta" style="margin:0">time from ${esc(c.timeFrom.slice(4))}</span>` : ''}<span class="ev-kind">Call ${i + 1} · ${esc([c.category, c.reason].filter(Boolean).join(' · '))}</span>${c.status ? `<span class="badge-navy">${esc(c.status)}</span>` : ''}</div>
+    <div class="ev-top"><span class="ev-date">${c.ts != null ? (c.dateOnly ? fmtDay(c.ts) : fmt(c.ts)) : esc(c.raw || 'No date')}</span><span class="ev-kind">Call ${i + 1} · ${esc([c.category, c.reason].filter(Boolean).join(' · '))}</span>${c.status ? `<span class="badge-navy">${esc(c.status)}</span>` : ''}</div>
     <div class="ev-head">${c.notes ? esc(c.notes) : '<i style="opacity:.6">No notes</i>'}</div>
+    ${c.varNotes ? `<div class="ev-text">${esc(c.varNotes)}</div>` : ''}
     <div class="ev-meta">${[c.depot, c.route && 'Route ' + c.route, c.driver].filter(Boolean).map(esc).join(' · ')}</div>
   </div></div>`;
   const others = e.others || [];

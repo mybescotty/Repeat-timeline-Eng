@@ -7,7 +7,7 @@ Single-file browser tool (`repeat-defects-timeline.html`) that finds repeat defe
 1. Open `repeat-defects-timeline.html` in Chrome or Edge (double-click it, no install needed).
 2. Load the CSV exports:
    - **HxGN / EAM driver defect (EDVC) export**: OpCo, Depot, Equipment, Date Reported, Type, Driver Defect WOs, Description, Driver Comments, Roadworthiness Defect, Status, Priority, Sched. Start Date, Assigned To Name, Problem Description, Closing Comments, Action Description, Cleared Date. Windows-1252 or UTF-8 both work.
-   - **Call log** (required for the default mode; optional for HxGN-only mode): Status, Location, Call D/T, Reason, Bus No … Notes (N), Lost Mileage Reason Description (O).
+   - **Call log** (required for the default mode; optional for HxGN-only mode): Status, Location, Call D/T, Reason, Bus No, VEHICLE_TYPE, Driver, Incident Date, Route Code(s), Notes, BUS_BOARD, START_TIME (L), END_TIME, VAR_NOTES, Lost Mileage Reason Description (O).
 3. Pick how to find repeats, adjust the settings, then click **Build timeline**.
 
 All processing happens in the browser. No data is uploaded anywhere.
@@ -31,7 +31,8 @@ All processing happens in the browser. No data is uploaded anywhere.
 ## Data handling
 - The exact report time comes from the first driver note timestamp (UTC, shown in local time). Rows without notes use the Date Reported.
 - The EAM export mixes date formats (1st–12th of the month come out as mm/dd/yyyy). Ambiguous dates are resolved against the driver note timestamps.
-- **Call times**: taken from Call D/T. If it has a date but no time (blank or exactly 00:00, which is how Excel writes a date-only value), the tool uses a separate Call Time column if there is one, or else another date/time on the same row for the same day (e.g. Status D/T). If there's no time anywhere, the call shows the date only (a note under the upload boxes says how many).
+- **Call times**: the breakdown time comes from **START_TIME** (call log column L), combined with the call date (Call D/T, or Incident Date if there's no Call D/T). It accepts `14:35`, `14:35:00`, `2:35 pm`, Excel time fractions, `1899-12-30T14:35:00` (Excel time-only) and full date/times. A START_TIME that is blank, 00:00 / `1899-12-30T00:00:00`, not a time, or dated a different day from the call is ignored. The call then shows the date only, and gaps between calls are counted in whole days. A note under the upload boxes says how many calls have a time.
+- **Call notes**: the repeat header and each call use **Notes**. VAR_NOTES, if present and different, is shown under it.
 - Driver notes have FaultIDs and duplicate "Ticketer Portal update" copies removed.
 - Colours: green = EDVC cleared, amber = no fault found / ok for service, red outline = not cleared yet, red = call log call.
 
@@ -42,4 +43,4 @@ All processing happens in the browser. No data is uploaded anywhere.
 - **Save shareable HTML**: downloads a self-contained snapshot. Recipients open it in a browser without the CSVs, and can still filter by depot, search and print.
 
 ## Column detection
-Columns are matched by header name, so column order can change. If a header isn't recognised, it falls back to the standard column letter. The detected mapping appears under the upload boxes.
+Columns are matched by header name, so column order can change. Only fields whose header isn't recognised fall back to the standard column letter, and never onto a column another field is named in. The detected mapping appears under the upload boxes.
