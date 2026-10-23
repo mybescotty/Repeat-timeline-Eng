@@ -111,6 +111,11 @@ main { padding: 16px 20px 40px; min-width: 0; }
 .ev.wo.uncleared .ev-card { background: #fff; border-color: rgba(231,76,60,0.5); }
 .ev.wo.uncleared::before { border-color: #e74c3c; }
 .ev.wo.top { margin-left: 0; }
+details.others { margin-left: 22px; }
+details.others > summary { cursor: pointer; list-style: none; margin: -4px 0 8px; }
+details.others > summary::-webkit-details-marker { display: none; }
+details.others .ev.wo { margin-left: 0; opacity: .6; }
+details.others .ev.wo::before { left: -22px; }
 .ev.wo.top::before { left: -22px; width: 12px; height: 12px; border-width: 3px; top: 8px; }
 .ev.none .ev-card { background: #fff; border-style: dashed; color: #c0392b; }
 .ev.none::before { border-color: #e74c3c; left: -44px; width: 10px; height: 10px; border-width: 2px; top: 9px; }
@@ -223,7 +228,7 @@ main { padding: 16px 20px 40px; min-width: 0; }
       </label>
       <label id="edvcShowLbl">HxGN repairs shown under each call
         <select id="setEdvcShow" style="width:260px">
-          <option value="repeating">Only defects raised 2+ times in the timeline (column H)</option>
+          <option value="related">Only EDVCs related to the call's category (column O)</option>
           <option value="all">All EDVCs on the bus</option>
         </select>
       </label>
@@ -310,6 +315,40 @@ const WO_COLS = {
 };
 const NFF_RE = /\b(ok for service|okay for service|no fault|nff|n\.f\.f|nothing found|no defect|unable to (replicate|find|recreate)|could not (replicate|find|recreate)|cannot (replicate|find)|tested ok|checked\W*ok|all ok|checked and ok|working as (it )?should|working (ok|fine|correctly)|no issues?|no problems?)\b/i;
 const DAY = 86400000;
+// Lost mileage category (call log column O) -> words that mark an HxGN EDVC as related.
+// Matched against the EDVC description, column H defect, driver notes, problem and closing comment.
+const AIR = String.raw`\bair\b(?!\s*con)`;
+const RELATED = [
+  { cat: /leak|fluid/i, edvc: String.raw`leak|coolant|water|\boil\b|fuel|diesel|adblue|fluid|top(ped)?\s*up|${AIR}|compressor|hydraulic` },
+  { cat: /overheat|cold|heat/i, edvc: String.raw`overheat|over heat|temp|coolant|water|heat|cold|demist|air con|forced air|\bfan\b|climate|thermostat` },
+  { cat: /engine|power|non.?start/i, edvc: String.raw`engine|\beml\b|management light|ecu|derate|\blim\b|lim mode|limp|non.?start|cut(ting)?\s*out|stall|starter|dpf|regen|turbo|accelerat|power|exhaust|\bedc\b|belt|oil pressure|coolant|overheat|smok|injector|eminox|adblue` },
+  { cat: /wiper|demist/i, edvc: String.raw`wiper|washer|demist|screen\s*wash|windscreen|mist` },
+  { cat: /\bev\b|electric vehicle|hybrid/i, edvc: String.raw`\bev\b|electric|batt|charg|string|\bhv\b|high voltage|inverter|traction|motor|ecas|isolat|dob` },
+  { cat: /electric/i, edvc: String.raw`electric|batt|charg|alternator|\balt\b|master switch|string|\bdob\b|dash|fuse|wiring|power|ecas|ecu|warning light|starter|light` },
+  { cat: /gear|transmission/i, edvc: String.raw`gear|transmission|clutch|retarder|reverse|selector` },
+  { cat: /brake/i, edvc: String.raw`brake|\bebs\b|\babs\b|pad\s*wear|lining|handbrake|retarder|${AIR}|quad valve` },
+  { cat: /light|lamp/i, edvc: String.raw`lighting|head\s*light|tail|lamp|bulb|indicator|hazard|marker|saloon light|step light|brake light|reversing light|fog|number plate light|destination light|interior light` },
+  { cat: /fuel/i, edvc: String.raw`fuel|diesel|adblue` },
+  { cat: /door|ramp/i, edvc: String.raw`door|ramp|kneel|ferry lift|wheelchair` },
+  { cat: /steer|suspension/i, edvc: String.raw`steer|suspension|ecas|kneel|air bag|tyre|wheel|turntable` },
+  { cat: /tyre|wheel|puncture/i, edvc: String.raw`tyre|wheel|puncture|flat|nuts` },
+  { cat: /body|glass|window|screen|accident|rtc|collision|vandal|damage/i, edvc: String.raw`glass|window|windscreen|panel|mirror|body|\brtc\b|damage|smash|vandal|broken` },
+  { cat: /destination|destin/i, edvc: String.raw`destin|desti` },
+  { cat: /cctv|ticket|etm/i, edvc: String.raw`cctv|ticket|greenroad|camera|card reader|emv` },
+  { cat: /exhaust|emission|smoke/i, edvc: String.raw`exhaust|smok|dpf|regen|adblue|emission|eminox|fume` },
+  { cat: /\bair\b/i, edvc: String.raw`${AIR}|compressor|leak` }
+];
+const STOP = new Set(['defect', 'defects', 'fault', 'faults', 'failure', 'other', 'with', 'from', 'lost', 'mileage', 'roadcall', 'and', 'the', 'internal', 'external']);
+const relCache = new Map();
+// Returns a test for "is this EDVC related to the call category", or null if the category has nothing to match on
+function relatedTest(cat) {
+  cat = String(cat || '').trim(); if (relCache.has(cat)) return relCache.get(cat);
+  let parts = RELATED.filter(x => x.cat.test(cat)).map(x => x.edvc);
+  if (!parts.length) parts = cat.toLowerCase().split(/[^a-z]+/).filter(t => t.length > 3 && !STOP.has(t));
+  const re = parts.length ? new RegExp(parts.join('|'), 'i') : null;
+  const test = re && (w => re.test([w.defect, w.item, w.notes.join(' '), w.problem, w.closing].join(' ')));
+  relCache.set(cat, test); return test;
+}
 
 /* ===== §2 CSV parsing ===== */
 function parseCSV(text) {
@@ -522,22 +561,27 @@ function makeRepeat(chain, busWOs, opt) {
     const upper = Math.min(opt.woWin > 0 ? c.ts + opt.woWin * DAY : Infinity, next && next.ts != null ? dayStart(next.ts) - 1 : Infinity);
     return busWOs.filter(w => w.ts >= lower && w.ts <= upper);
   });
-  // How often each defect (column H item) comes up across this repeat's timeline
-  const itemCount = new Map();
-  for (const w of perCall.flat()) { const k = reasonKey(w.item); itemCount.set(k, (itemCount.get(k) || 0) + 1); }
-  chain.forEach((c, i) => {
-    const all = perCall[i].map(w => ({ ...w, rep: itemCount.get(reasonKey(w.item)) || 1 }));
-    const shown = opt.edvcShow === 'all' ? all : all.filter(w => w.rep >= 2);
-    const woEvents = shown.map(w => { if (w.nff) nff++; woCount++; return { ...w, after: w.ts - c.ts, clearedAfter: w.cleared != null ? w.cleared - dayStart(c.ts) : null }; });
-    if (!all.length) unclosed++;
-    events.push({ call: c, gap: i > 0 && c.ts != null && chain[i - 1].ts != null ? c.ts - chain[i - 1].ts : null, wos: woEvents, total: all.length, hidden: all.length - shown.length });
+  // Keep the EDVCs related to each call's lost mileage category; the rest are listed as not related
+  const shownPer = chain.map((c, i) => {
+    const test = relatedTest(c.category || c.reason);
+    return opt.edvcShow === 'all' ? perCall[i] : perCall[i].filter(w => test && test(w));
   });
-  const repeating = [...itemCount.entries()].filter(([, n]) => n >= 2).map(([k, n]) => ({ name: perCall.flat().find(w => reasonKey(w.item) === k).item, n })).sort((a, b) => b.n - a.n);
+  // How often each defect (column H item) comes up among the shown EDVCs in this timeline
+  const itemCount = new Map();
+  for (const w of shownPer.flat()) { const k = reasonKey(w.item); itemCount.set(k, (itemCount.get(k) || 0) + 1); }
+  const prep = (w, c) => ({ ...w, rep: itemCount.get(reasonKey(w.item)) || 1, after: w.ts - c.ts, clearedAfter: w.cleared != null ? w.cleared - dayStart(c.ts) : null });
+  chain.forEach((c, i) => {
+    const woEvents = shownPer[i].map(w => { if (w.nff) nff++; woCount++; return prep(w, c); });
+    const others = perCall[i].filter(w => !shownPer[i].includes(w)).map(w => ({ ...prep(w, c), rep: 1 }));
+    if (!woEvents.length) unclosed++;
+    events.push({ call: c, gap: i > 0 && c.ts != null && chain[i - 1].ts != null ? c.ts - chain[i - 1].ts : null, wos: woEvents, total: perCall[i].length, others });
+  });
+  const repeating = [...itemCount.entries()].filter(([, n]) => n >= 2).map(([k, n]) => ({ name: shownPer.flat().find(w => reasonKey(w.item) === k).item, n })).sort((a, b) => b.n - a.n);
   // Depot is where the bus was most recently reported
   return { bus: last.bus, bk: last.bk, reason: last.category || last.reason, byCategory: !!last.category,
     callReasons: [...new Set(chain.map(c => c.reason).filter(Boolean))], depot: last.depot, notes: last.notes, vtype: last.vtype,
     first: chain[0].ts, last: last.ts, count: chain.length, events, nff, woCount, unclosed, repeating,
-    lastOpen: events[events.length - 1].total === 0 };
+    lastOpen: events[events.length - 1].wos.length === 0 };
 }
 
 /* ===== §5 State + file handling ===== */
@@ -645,16 +689,16 @@ function render() {
   const m = S.meta, o = m.opt;
   const ed = o.mode === 'edvc';
   $('reportMeta').innerHTML = `Sources: ${m.files.calls ? `<b>${esc(m.files.calls)}</b> (${m.nCalls.toLocaleString()} calls) · ` : ''}<b>${esc(m.files.wo)}</b> (${m.nWOs.toLocaleString()} EDVCs) · Generated ${fmt(m.generated)}<br>
-    ${ed ? `Repeat = same bus + same defect (EDVC column H) ≥ ${o.min} times` : `Repeat = same bus + same lost mileage category (col O) ≥ ${o.min} times`}${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, ${ed ? 'EDVCs' : 'calls'} from ${fmtDay(parseDate(o.from))}` : ''}${ed ? '' : ` · HxGN repairs shown from each call day ${o.woWin ? `up to ${o.woWin} days after` : 'up to the next call'}${o.edvcShow === 'all' ? '' : ', only defects raised 2+ times in the timeline'}`}
-    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? (ed ? ' · latest not cleared only' : ' · no EDVC only') : ''}${S.excluded.size ? (ed ? ' · defects excluded: ' : ' · excluded: ') + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
+    ${ed ? `Repeat = same bus + same defect (EDVC column H) ≥ ${o.min} times` : `Repeat = same bus + same lost mileage category (col O) ≥ ${o.min} times`}${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, ${ed ? 'EDVCs' : 'calls'} from ${fmtDay(parseDate(o.from))}` : ''}${ed ? '' : ` · HxGN repairs shown from each call day ${o.woWin ? `up to ${o.woWin} days after` : 'up to the next call'}${o.edvcShow === 'all' ? '' : ', only EDVCs related to the call category'}`}
+    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? (ed ? ' · latest not cleared only' : ' · no related EDVC only') : ''}${S.excluded.size ? (ed ? ' · defects excluded: ' : ' · excluded: ') + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
   const buses = new Set(list.map(r => r.bk)).size;
   const calls = list.reduce((s, r) => s + r.count, 0);
   const open = list.filter(r => r.lastOpen).length;
   const nff = list.reduce((s, r) => s + r.nff, 0);
-  $('summary').innerHTML = [[list.length, 'Repeat defects'], [buses, 'Buses'], [calls, ed ? 'EDVCs involved' : 'Calls involved'], [open, ed ? 'Latest not cleared' : 'Latest call no EDVC'], [nff, 'NFF / OK closures']]
+  $('summary').innerHTML = [[list.length, 'Repeat defects'], [buses, 'Buses'], [calls, ed ? 'EDVCs involved' : 'Calls involved'], [open, ed ? 'Latest not cleared' : 'Latest call no related EDVC'], [nff, 'NFF / OK closures']]
     .map(([v, l]) => `<div class="stat"><div class="v">${v.toLocaleString()}</div><div class="l">${l}</div></div>`).join('');
 
-  $('tglOpen').textContent = ed ? 'Latest not cleared only' : 'No EDVC only';
+  $('tglOpen').textContent = ed ? 'Latest not cleared only' : 'No related EDVC only';
   $('legend').innerHTML = (ed ? '' : '<span class="lc">Call reported (call log)</span>') + '<span class="lw">EDVC cleared</span><span class="ln">No fault found / ok for service</span>'
     + (ed ? '<span class="lx">Not cleared yet</span>' : '<span class="lx">No driver submitted EDVC found</span>');
   if (!list.length) { $('report').innerHTML = `<div class="empty">No repeat defects match the current filters.</div>`; return; }
@@ -674,7 +718,7 @@ function renderRepeat(r) {
   const open = S.expandAll || S.expanded.has(k);
   const title = r.notes || r.reason;
   const badges = [`<span class="badge-navy">${r.count}× repeat</span>`,
-    r.lastOpen ? `<span class="badge-red">Latest call: no EDVC</span>` : `<span class="badge-green">Latest call: EDVC found</span>`,
+    r.lastOpen ? `<span class="badge-red">Latest call: no related EDVC</span>` : `<span class="badge-green">Latest call: related EDVC found</span>`,
     r.nff ? `<span class="badge-amber">${r.nff} NFF / OK</span>` : '',
     `<button class="pdf-btn no-print" title="Print / save just this repeat as PDF">🖨 PDF</button>`].join('');
   return `<div class="repeat${open ? ' expanded' : ''}${r.lastOpen ? ' open-wo' : ''}" data-key="${esc(k)}">
@@ -726,12 +770,15 @@ function renderEvent(e, i) {
     <div class="ev-head">${c.notes ? esc(c.notes) : '<i style="opacity:.6">No notes</i>'}</div>
     <div class="ev-meta">${[c.depot, c.route && 'Route ' + c.route, c.driver].filter(Boolean).map(esc).join(' · ')}</div>
   </div></div>`;
-  if (!(e.total ?? e.wos.length)) h += `<div class="ev none"><div class="ev-card">No driver submitted EDVC found</div></div>`;
+  const others = e.others || [];
+  if (!e.wos.length) h += `<div class="ev none"><div class="ev-card">${others.length ? `No related EDVC found for ${esc(c.category || c.reason)}` : 'No driver submitted EDVC found'}</div></div>`;
   for (const w of e.wos) {
     const when = w.dateOnly ? 'reported ' + (dayStart(w.ts) === dayStart(c.ts) ? 'same day' : dur(w.ts - dayStart(c.ts)) + ' after call day') : 'reported ' + rel(w.after) + ' call';
     h += edvcCard(w, '', when, w => w.clearedAfter < DAY ? ' (same day as call)' : ` (${Math.floor(w.clearedAfter / DAY)} day${Math.floor(w.clearedAfter / DAY) === 1 ? '' : 's'} after call)`);
   }
-  if (e.hidden) h += `<div class="gap" style="margin-left:22px">+ ${e.hidden} other EDVC${e.hidden === 1 ? '' : 's'} on this bus for one-off defects (not shown)</div>`;
+  if (others.length) h += `<details class="others no-print"><summary class="gap">+ ${others.length} other EDVC${others.length === 1 ? '' : 's'} on this bus, not related to ${esc(c.category || c.reason)} (click to show)</summary>${others.map(w =>
+    edvcCard(w, 'unrelated', w.dateOnly ? 'reported ' + (dayStart(w.ts) === dayStart(c.ts) ? 'same day' : dur(w.ts - dayStart(c.ts)) + ' after call day') : 'reported ' + rel(w.after) + ' call', w => w.clearedAfter < DAY ? ' (same day as call)' : ` (${Math.floor(w.clearedAfter / DAY)} day${Math.floor(w.clearedAfter / DAY) === 1 ? '' : 's'} after call)`)).join('')}</details>
+    <div class="gap print-only" style="margin-left:22px">+ ${others.length} other EDVC${others.length === 1 ? '' : 's'} on this bus, not related to ${esc(c.category || c.reason)}</div>`;
   return h;
 }
 

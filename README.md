@@ -20,9 +20,10 @@ All processing happens in the browser. No data is uploaded anywhere.
   - Calls with column O blank are left out. Older call logs with no column O are grouped by Reason instead.
 - Each call is the moment the driver raised it. Under it are the HxGN EDVCs for that bus from the start of the call day up to the next call (or up to N days, if set). These are the repairs in between.
 - **HxGN repairs shown under each call**:
-  - *Only defects raised 2+ times in the timeline* (default): uses the defect at the start of Driver Comments (column H). Low coolant followed by low coolant is shown and tagged "Coolant ×2". A one-off bell push is hidden and counted in a "+ N other EDVCs" line.
+  - *Only EDVCs related to the call's category* (default): each lost mileage category has a set of related words, matched against the EDVC description, column H defect, driver notes, problem and closing comment. For example, Fluid/Air Leaks matches coolant, water, oil, fuel, AdBlue and air leaks, low coolant lights and top-ups; Engine Failure matches EML/ECU, derate/lim, non-start, cutting out, DPF/regen, turbo and so on. Categories with no word list match on the words in the category name.
+  - EDVCs on the bus that aren't related (e.g. Greenroad/CCTV under a coolant breakdown) are counted as "+ N other EDVCs on this bus, not related to …" and can be clicked open. Print shows the count only.
   - *All EDVCs on the bus*: shows everything.
-- The repeat header lists the repeating defects. "No driver submitted EDVC found" marks calls with no EDVC at all.
+- Related EDVC defects that come up more than once are tagged (e.g. "Coolant ×2") and listed in the repeat header. "No related EDVC found" marks calls where the bus has EDVCs but none relate; "No driver submitted EDVC found" marks calls with none at all.
 
 ### HxGN only: same defect on the same bus
 - **Repeat** = the same Equipment with the same column H defect reported more than once. There's no call log needed; if one is loaded it names the depots, otherwise EAM depot codes are used.
