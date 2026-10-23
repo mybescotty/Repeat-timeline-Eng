@@ -647,7 +647,7 @@ function showColMap() {
   let warn = '';
   if (S.calls) {
     const t = S.calls.timeInfo, n = S.calls.rows.length;
-    if (t.noTime) warn += `<div class="err" style="margin-top:6px">⚠ ${t.noTime.toLocaleString()} of ${n.toLocaleString()} calls have a date but no time (blank or 00:00) in "${esc(S.calls.header[S.calls.map.callDT] || 'Call D/T')}", and no other time column was found for them. Excel drops the time when the column is formatted as a date: in Excel select that column, Format Cells → Custom → <code>dd/mm/yyyy hh:mm</code>, then Save As CSV again. These calls show the date only.</div>`;
+    if (t.noTime) warn += `<div style="margin-top:6px">ℹ ${t.noTime.toLocaleString()} of ${n.toLocaleString()} calls have no time recorded, so they show the date only.</div>`;
     if (t.fromOtherCol) warn += `<div style="margin-top:6px">ℹ ${t.fromOtherCol.toLocaleString()} call times were taken from another date/time column on the same day (e.g. Status D/T) because the call date had no time.</div>`;
   }
   $('colmap').innerHTML = part(S.calls, CALL_COLS, 'Calls') + part(S.wos, WO_COLS, 'EDVC') + warn;
