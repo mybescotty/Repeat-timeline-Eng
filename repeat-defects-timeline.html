@@ -285,7 +285,8 @@ details.others .ev.wo::before { left: -22px; }
 const CALL_COLS = {
   status:   { names: ['status', 'callstatus'], idx: 0 },
   depot:    { names: ['location', 'depot', 'garage', 'site'], idx: 1 },
-  callDT:   { names: ['calldt', 'calldatetime', 'calldate', 'calltime', 'call'], idx: 2 },
+  callDT:   { names: ['calldt', 'calldatetime', 'calldate', 'datetimeofcall', 'callreceived', 'calldatetimereceived'], idx: 2 },
+  callTime: { names: ['calltime', 'timeofcall', 'time', 'calltimereceived'], idx: -1 },
   reason:   { names: ['reason', 'fault', 'defect', 'defectreason'], idx: 3 },
   bus:      { names: ['busno', 'busnumber', 'bus', 'fleetno', 'fleetnum', 'fleetnumber'], idx: 4 },
   vtype:    { names: ['vehicletype', 'type'], idx: 5 },
@@ -435,13 +436,32 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 function readCalls(rows) {
   const map = mapColumns(rows[0], CALL_COLS); const out = [];
   const g = (r, k) => map[k] >= 0 ? (r[map[k]] || '').trim() : '';
+  // An exact midnight is how Excel writes a date with no time, so it counts as "no time"
+  const hasTime = v => (/\d:\d\d/.test(v) && !/(^|\D)0?0:00(:00)?(\D|$)/.test(v)) || /^\d{5}\.\d+$/.test(v);
+  let fromTimeCol = 0, fromOtherCol = 0, noTime = 0;
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i]; const bus = g(r, 'bus'); const reason = g(r, 'reason'); const category = g(r, 'lostMiles');
     if (!bus || !(reason || category)) continue;
-    out.push({ status: g(r, 'status'), depot: g(r, 'depot') || 'Unknown', raw: g(r, 'callDT'), ts: parseDate(g(r, 'callDT')),
+    let raw = g(r, 'callDT'), ts = parseDate(raw), timeFrom = '';
+    if (ts != null && !hasTime(raw)) {
+      // Time held in its own column ("17:53", "17:53:00" or an Excel day fraction)
+      const t = g(r, 'callTime'); const tm = t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      const frac = /^0?\.\d+$/.test(t) ? parseFloat(t) : null;
+      if (tm && !(+tm[1] === 0 && +tm[2] === 0)) { ts = dayStart(ts) + ((+tm[1]) * 60 + (+tm[2])) * 60000 + (+(tm[3] || 0)) * 1000; timeFrom = 'col'; }
+      else if (frac != null) { ts = dayStart(ts) + Math.round(frac * DAY / 60000) * 60000; timeFrom = 'col'; }
+      else {
+        // Otherwise borrow the time from another date/time on the row for the same day (e.g. Status D/T)
+        for (let j = 0; j < r.length; j++) {
+          if (j === map.callDT || !hasTime(r[j] || '')) continue;
+          const o = parseDate(r[j]); if (o != null && dayStart(o) === dayStart(ts)) { ts = o; timeFrom = 'row:' + (rows[0][j] || 'col ' + (j + 1)); break; }
+        }
+      }
+      if (!timeFrom) noTime++; else if (timeFrom === 'col') fromTimeCol++; else fromOtherCol++;
+    }
+    out.push({ status: g(r, 'status'), depot: g(r, 'depot') || 'Unknown', raw, ts, dateOnly: ts != null && !hasTime(raw) && !timeFrom, timeFrom,
       reason, category, bus, bk: busKey(bus), vtype: g(r, 'vtype'), driver: g(r, 'driver'), route: g(r, 'route'), notes: g(r, 'notes') });
   }
-  return { rows: out, map, header: rows[0] };
+  return { rows: out, map, header: rows[0], timeInfo: { fromTimeCol, fromOtherCol, noTime } };
 }
 // Driver comments hold one or more "Note n (2026-10-16T22:49:56 UTC - Driver 123):text" entries,
 // often repeated by "Ticketer Portal update"; return the unique note texts with their times.
@@ -624,7 +644,13 @@ function showColMap() {
     const items = Object.keys(spec).map(k => `${k}: <code>${d.map[k] >= 0 ? esc(d.header[d.map[k]] || '(col ' + (d.map[k] + 1) + ')') : 'not found'}</code>`);
     return `<div><b>${label}</b> → ${items.join(' · ')}</div>`;
   };
-  $('colmap').innerHTML = part(S.calls, CALL_COLS, 'Calls') + part(S.wos, WO_COLS, 'EDVC');
+  let warn = '';
+  if (S.calls) {
+    const t = S.calls.timeInfo, n = S.calls.rows.length;
+    if (t.noTime) warn += `<div class="err" style="margin-top:6px">⚠ ${t.noTime.toLocaleString()} of ${n.toLocaleString()} calls have a date but no time (blank or 00:00) in "${esc(S.calls.header[S.calls.map.callDT] || 'Call D/T')}", and no other time column was found for them. Excel drops the time when the column is formatted as a date: in Excel select that column, Format Cells → Custom → <code>dd/mm/yyyy hh:mm</code>, then Save As CSV again. These calls show the date only.</div>`;
+    if (t.fromOtherCol) warn += `<div style="margin-top:6px">ℹ ${t.fromOtherCol.toLocaleString()} call times were taken from another date/time column on the same day (e.g. Status D/T) because the call date had no time.</div>`;
+  }
+  $('colmap').innerHTML = part(S.calls, CALL_COLS, 'Calls') + part(S.wos, WO_COLS, 'EDVC') + warn;
 }
 function updateMode() {
   const edvc = $('setMode').value === 'edvc';
@@ -766,18 +792,18 @@ function renderEvent(e, i) {
   let h = '';
   if (i > 0) h += `<div class="gap">↻ Repeated ${e.gap != null ? dur(e.gap) + ' later' : ''}</div>`;
   h += `<div class="ev call"><div class="ev-card">
-    <div class="ev-top"><span class="ev-date">${c.ts != null ? fmt(c.ts) : esc(c.raw || 'No date')}</span><span class="ev-kind">Call ${i + 1} · ${esc([c.category, c.reason].filter(Boolean).join(' · '))}</span>${c.status ? `<span class="badge-navy">${esc(c.status)}</span>` : ''}</div>
+    <div class="ev-top"><span class="ev-date">${c.ts != null ? (c.dateOnly ? fmtDay(c.ts) : fmt(c.ts)) : esc(c.raw || 'No date')}</span>${c.timeFrom && c.timeFrom.startsWith('row:') ? `<span class="ev-meta" style="margin:0">time from ${esc(c.timeFrom.slice(4))}</span>` : ''}<span class="ev-kind">Call ${i + 1} · ${esc([c.category, c.reason].filter(Boolean).join(' · '))}</span>${c.status ? `<span class="badge-navy">${esc(c.status)}</span>` : ''}</div>
     <div class="ev-head">${c.notes ? esc(c.notes) : '<i style="opacity:.6">No notes</i>'}</div>
     <div class="ev-meta">${[c.depot, c.route && 'Route ' + c.route, c.driver].filter(Boolean).map(esc).join(' · ')}</div>
   </div></div>`;
   const others = e.others || [];
   if (!e.wos.length) h += `<div class="ev none"><div class="ev-card">${others.length ? `No related EDVC found for ${esc(c.category || c.reason)}` : 'No driver submitted EDVC found'}</div></div>`;
   for (const w of e.wos) {
-    const when = w.dateOnly ? 'reported ' + (dayStart(w.ts) === dayStart(c.ts) ? 'same day' : dur(w.ts - dayStart(c.ts)) + ' after call day') : 'reported ' + rel(w.after) + ' call';
+    const when = w.dateOnly || c.dateOnly ? 'reported ' + (dayStart(w.ts) === dayStart(c.ts) ? 'same day' : dur(w.ts - dayStart(c.ts)) + ' after call day') : 'reported ' + rel(w.after) + ' call';
     h += edvcCard(w, '', when, w => w.clearedAfter < DAY ? ' (same day as call)' : ` (${Math.floor(w.clearedAfter / DAY)} day${Math.floor(w.clearedAfter / DAY) === 1 ? '' : 's'} after call)`);
   }
   if (others.length) h += `<details class="others no-print"><summary class="gap">+ ${others.length} other EDVC${others.length === 1 ? '' : 's'} on this bus, not related to ${esc(c.category || c.reason)} (click to show)</summary>${others.map(w =>
-    edvcCard(w, 'unrelated', w.dateOnly ? 'reported ' + (dayStart(w.ts) === dayStart(c.ts) ? 'same day' : dur(w.ts - dayStart(c.ts)) + ' after call day') : 'reported ' + rel(w.after) + ' call', w => w.clearedAfter < DAY ? ' (same day as call)' : ` (${Math.floor(w.clearedAfter / DAY)} day${Math.floor(w.clearedAfter / DAY) === 1 ? '' : 's'} after call)`)).join('')}</details>
+    edvcCard(w, 'unrelated', w.dateOnly || c.dateOnly ? 'reported ' + (dayStart(w.ts) === dayStart(c.ts) ? 'same day' : dur(w.ts - dayStart(c.ts)) + ' after call day') : 'reported ' + rel(w.after) + ' call', w => w.clearedAfter < DAY ? ' (same day as call)' : ` (${Math.floor(w.clearedAfter / DAY)} day${Math.floor(w.clearedAfter / DAY) === 1 ? '' : 's'} after call)`)).join('')}</details>
     <div class="gap print-only" style="margin-left:22px">+ ${others.length} other EDVC${others.length === 1 ? '' : 's'} on this bus, not related to ${esc(c.category || c.reason)}</div>`;
   return h;
 }

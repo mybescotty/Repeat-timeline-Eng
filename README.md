@@ -31,6 +31,7 @@ All processing happens in the browser. No data is uploaded anywhere.
 ## Data handling
 - The exact report time comes from the first driver note timestamp (UTC, shown in local time). Rows without notes use the Date Reported.
 - The EAM export mixes date formats (1st–12th of the month come out as mm/dd/yyyy). Ambiguous dates are resolved against the driver note timestamps.
+- **Call times**: taken from Call D/T. If it has a date but no time (blank or exactly 00:00, which is how Excel writes a date-only value), the tool uses a separate Call Time column if there is one, or else another date/time on the same row for the same day (e.g. Status D/T). If there's no time anywhere, the call shows the date only and a warning appears under the upload boxes: in Excel, format the column as Custom `dd/mm/yyyy hh:mm` before saving as CSV.
 - Driver notes have FaultIDs and duplicate "Ticketer Portal update" copies removed.
 - Colours: green = EDVC cleared, amber = no fault found / ok for service, red outline = not cleared yet, red = call log call.
 
