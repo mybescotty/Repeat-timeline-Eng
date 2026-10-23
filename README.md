@@ -7,7 +7,7 @@ Single-file browser tool (`repeat-defects-timeline.html`) that finds repeat defe
 1. Open `repeat-defects-timeline.html` in Chrome or Edge (double-click it, no install needed).
 2. Load the CSV exports:
    - **HxGN / EAM driver defect (EDVC) export**: OpCo, Depot, Equipment, Date Reported, Type, Driver Defect WOs, Description, Driver Comments, Roadworthiness Defect, Status, Priority, Sched. Start Date, Assigned To Name, Problem Description, Closing Comments, Action Description, Cleared Date. Windows-1252 or UTF-8 both work.
-   - **Call log** (required for the default mode; optional for HxGN-only mode): Status, Location, Call D/T, Reason, Bus No … Notes.
+   - **Call log** (required for the default mode; optional for HxGN-only mode): Status, Location, Call D/T, Reason, Bus No … Notes (N), Lost Mileage Reason Description (O).
 3. Pick how to find repeats, adjust the settings, then click **Build timeline**.
 
 All processing happens in the browser. No data is uploaded anywhere.
@@ -15,7 +15,9 @@ All processing happens in the browser. No data is uploaded anywhere.
 ## Repeat modes
 
 ### Call log + HxGN repairs in between (default)
-- **Repeat** = the same Bus No with the same call log Reason logged at least the minimum number of times (default 2). Optionally the calls must be within N days of each other.
+- **Repeat** = the same Bus No with the same **lost mileage category (call log column O, "Lost Mileage Reason Description")** logged at least the minimum number of times (default 2). Optionally the calls must be within N days of each other.
+  - Engine Failure followed by Engine Failure is a repeat, even if the Reason (column D) differs. Engine Failure followed by Electrical Defect is not.
+  - Calls with column O blank are left out. Older call logs with no column O are grouped by Reason instead.
 - Each call is the moment the driver raised it. Under it are the HxGN EDVCs for that bus from the start of the call day up to the next call (or up to N days, if set). These are the repairs in between.
 - **HxGN repairs shown under each call**:
   - *Only defects raised 2+ times in the timeline* (default): uses the defect at the start of Driver Comments (column H). Low coolant followed by low coolant is shown and tagged "Coolant ×2". A one-off bell push is hidden and counted in a "+ N other EDVCs" line.

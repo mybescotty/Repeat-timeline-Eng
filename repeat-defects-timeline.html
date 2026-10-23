@@ -210,7 +210,7 @@ main { padding: 16px 20px 40px; min-width: 0; }
     <div class="settings">
       <label>Find repeats by
         <select id="setMode" style="width:260px">
-          <option value="calls">Call log: same bus + reason, HxGN repairs in between</option>
+          <option value="calls">Call log: same bus + lost mileage category (col O), HxGN repairs in between</option>
           <option value="edvc">HxGN only: same defect on the same bus (column H)</option>
         </select>
       </label>
@@ -286,7 +286,8 @@ const CALL_COLS = {
   vtype:    { names: ['vehicletype', 'type'], idx: 5 },
   driver:   { names: ['driver'], idx: 6 },
   route:    { names: ['routecodes', 'routecode', 'route', 'routes'], idx: 12 },
-  notes:    { names: ['notes', 'note', 'closingcomment', 'comments', 'comment'], idx: 13 }
+  notes:    { names: ['notes', 'note', 'closingcomment', 'comments', 'comment'], idx: 13 },
+  lostMiles:{ names: ['lostmileagereasondescription', 'lostmileagereason', 'lostmileagedescription', 'lostmileage'], idx: 14 }
 };
 // EAM driver defect (EDVC) export; older work order exports still map via the alias names
 const WO_COLS = {
@@ -396,10 +397,10 @@ function readCalls(rows) {
   const map = mapColumns(rows[0], CALL_COLS); const out = [];
   const g = (r, k) => map[k] >= 0 ? (r[map[k]] || '').trim() : '';
   for (let i = 1; i < rows.length; i++) {
-    const r = rows[i]; const bus = g(r, 'bus'); const reason = g(r, 'reason');
-    if (!bus || !reason) continue;
+    const r = rows[i]; const bus = g(r, 'bus'); const reason = g(r, 'reason'); const category = g(r, 'lostMiles');
+    if (!bus || !(reason || category)) continue;
     out.push({ status: g(r, 'status'), depot: g(r, 'depot') || 'Unknown', raw: g(r, 'callDT'), ts: parseDate(g(r, 'callDT')),
-      reason, bus, bk: busKey(bus), vtype: g(r, 'vtype'), driver: g(r, 'driver'), route: g(r, 'route'), notes: g(r, 'notes') });
+      reason, category, bus, bk: busKey(bus), vtype: g(r, 'vtype'), driver: g(r, 'driver'), route: g(r, 'route'), notes: g(r, 'notes') });
   }
   return { rows: out, map, header: rows[0] };
 }
@@ -458,9 +459,13 @@ function buildRepeats(calls, wos, opt) {
   for (const list of woByBus.values()) list.sort((a, b) => a.ts - b.ts);
 
   const groups = new Map();
+  // Repeats are grouped by the lost mileage category (column O). Calls with it blank are left out;
+  // older call logs with no category at all are grouped by Reason instead.
+  const hasCategories = calls.some(c => c.category);
   for (const c of calls) {
     if (fromTs != null && (c.ts == null || c.ts < fromTs)) continue;
-    const k = c.bk + '|' + reasonKey(c.reason);
+    if (hasCategories && !c.category) continue;
+    const k = c.bk + '|' + (c.category ? 'cat:' + reasonKey(c.category) : 'reason:' + reasonKey(c.reason));
     if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c);
   }
   const repeats = [];
@@ -529,7 +534,8 @@ function makeRepeat(chain, busWOs, opt) {
   });
   const repeating = [...itemCount.entries()].filter(([, n]) => n >= 2).map(([k, n]) => ({ name: perCall.flat().find(w => reasonKey(w.item) === k).item, n })).sort((a, b) => b.n - a.n);
   // Depot is where the bus was most recently reported
-  return { bus: last.bus, bk: last.bk, reason: last.reason, depot: last.depot, notes: last.notes, vtype: last.vtype,
+  return { bus: last.bus, bk: last.bk, reason: last.category || last.reason, byCategory: !!last.category,
+    callReasons: [...new Set(chain.map(c => c.reason).filter(Boolean))], depot: last.depot, notes: last.notes, vtype: last.vtype,
     first: chain[0].ts, last: last.ts, count: chain.length, events, nff, woCount, unclosed, repeating,
     lastOpen: events[events.length - 1].total === 0 };
 }
@@ -585,7 +591,7 @@ function updateMode() {
   $('fromLbl').textContent = edvc ? 'Only EDVCs from (optional)' : 'Only calls from (optional)';
   $('modeHelp').textContent = edvc
     ? 'A repeat is the same bus with the same defect (the item at the start of Driver Comments, column H) reported more than once. Different defects on the same bus are not repeats.'
-    : 'A repeat is the same bus with the same call log reason logged more than once, with the EDVCs raised after each call shown underneath.';
+    : 'A repeat is the same bus with the same lost mileage category (call log column O) logged more than once, e.g. Engine Failure then Engine Failure. Different categories on the same bus are not repeats. Calls with column O blank are left out (older call logs without column O use the Reason). The HxGN repairs after each call are shown underneath.';
 }
 function readSettings() {
   return { mode: $('setMode').value, min: Math.max(2, +$('setMin').value || 2), span: Math.max(0, +$('setSpan').value || 0), woWin: Math.max(0, +$('setWOWin').value || 0), edvcShow: $('setEdvcShow').value, from: $('setFrom').value };
@@ -639,8 +645,8 @@ function render() {
   const m = S.meta, o = m.opt;
   const ed = o.mode === 'edvc';
   $('reportMeta').innerHTML = `Sources: ${m.files.calls ? `<b>${esc(m.files.calls)}</b> (${m.nCalls.toLocaleString()} calls) · ` : ''}<b>${esc(m.files.wo)}</b> (${m.nWOs.toLocaleString()} EDVCs) · Generated ${fmt(m.generated)}<br>
-    ${ed ? `Repeat = same bus + same defect (EDVC column H) ≥ ${o.min} times` : `Repeat = same bus + same reason ≥ ${o.min} times`}${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, ${ed ? 'EDVCs' : 'calls'} from ${fmtDay(parseDate(o.from))}` : ''}${ed ? '' : ` · HxGN repairs shown from each call day ${o.woWin ? `up to ${o.woWin} days after` : 'up to the next call'}${o.edvcShow === 'all' ? '' : ', only defects raised 2+ times in the timeline'}`}
-    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? (ed ? ' · latest not cleared only' : ' · no EDVC only') : ''}${S.excluded.size ? (ed ? ' · defects excluded: ' : ' · reasons excluded: ') + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
+    ${ed ? `Repeat = same bus + same defect (EDVC column H) ≥ ${o.min} times` : `Repeat = same bus + same lost mileage category (col O) ≥ ${o.min} times`}${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, ${ed ? 'EDVCs' : 'calls'} from ${fmtDay(parseDate(o.from))}` : ''}${ed ? '' : ` · HxGN repairs shown from each call day ${o.woWin ? `up to ${o.woWin} days after` : 'up to the next call'}${o.edvcShow === 'all' ? '' : ', only defects raised 2+ times in the timeline'}`}
+    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? (ed ? ' · latest not cleared only' : ' · no EDVC only') : ''}${S.excluded.size ? (ed ? ' · defects excluded: ' : ' · excluded: ') + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
   const buses = new Set(list.map(r => r.bk)).size;
   const calls = list.reduce((s, r) => s + r.count, 0);
   const open = list.filter(r => r.lastOpen).length;
@@ -675,7 +681,7 @@ function renderRepeat(r) {
     <div class="repeat-hdr">
       <div class="repeat-title"><span class="chev">▶</span> ${esc(title)}</div>
       <div class="repeat-badges">${badges}</div>
-      <div class="repeat-sub"><b>Bus ${esc(r.bus)}</b><span>Reason: <b>${esc(r.reason)}</b></span>${r.vtype ? `<span>${esc(r.vtype)}</span>` : ''}<span>${fmtDay(r.first)} → ${fmtDay(r.last)}</span><span>${r.woCount} EDVC${r.woCount === 1 ? '' : 's'}</span>${r.repeating && r.repeating.length ? `<span>Repeating defects: ${r.repeating.map(x => `<span class="badge-pink">${esc(x.name)} ×${x.n}</span>`).join(' ')}</span>` : ''}</div>
+      <div class="repeat-sub"><b>Bus ${esc(r.bus)}</b>${r.byCategory ? `<span>Lost mileage: <b>${esc(r.reason)}</b></span>${r.callReasons.length ? `<span>Reason${r.callReasons.length === 1 ? '' : 's'}: ${esc(r.callReasons.join(', '))}</span>` : ''}` : `<span>Reason: <b>${esc(r.reason)}</b></span>`}${r.vtype ? `<span>${esc(r.vtype)}</span>` : ''}<span>${fmtDay(r.first)} → ${fmtDay(r.last)}</span><span>${r.woCount} EDVC${r.woCount === 1 ? '' : 's'}</span>${r.repeating && r.repeating.length ? `<span>Repeating defects: ${r.repeating.map(x => `<span class="badge-pink">${esc(x.name)} ×${x.n}</span>`).join(' ')}</span>` : ''}</div>
     </div>
     <div class="repeat-body"><div class="timeline">${r.events.map(renderEvent).join('')}</div></div>
   </div>`;
@@ -716,7 +722,7 @@ function renderEvent(e, i) {
   let h = '';
   if (i > 0) h += `<div class="gap">↻ Repeated ${e.gap != null ? dur(e.gap) + ' later' : ''}</div>`;
   h += `<div class="ev call"><div class="ev-card">
-    <div class="ev-top"><span class="ev-date">${c.ts != null ? fmt(c.ts) : esc(c.raw || 'No date')}</span><span class="ev-kind">Call ${i + 1} · ${esc(c.reason)}</span>${c.status ? `<span class="badge-navy">${esc(c.status)}</span>` : ''}</div>
+    <div class="ev-top"><span class="ev-date">${c.ts != null ? fmt(c.ts) : esc(c.raw || 'No date')}</span><span class="ev-kind">Call ${i + 1} · ${esc([c.category, c.reason].filter(Boolean).join(' · '))}</span>${c.status ? `<span class="badge-navy">${esc(c.status)}</span>` : ''}</div>
     <div class="ev-head">${c.notes ? esc(c.notes) : '<i style="opacity:.6">No notes</i>'}</div>
     <div class="ev-meta">${[c.depot, c.route && 'Route ' + c.route, c.driver].filter(Boolean).map(esc).join(' · ')}</div>
   </div></div>`;
@@ -744,7 +750,7 @@ function renderReasons() {
 }
 function updateReasonBtn(total) {
   const n = total ?? reasonNames().length;
-  $('reasonBtn').textContent = `${isEdvc() ? 'Defects' : 'Reasons'} (${n - S.excluded.size}/${n}) ▾`;
+  $('reasonBtn').textContent = `${isEdvc() ? 'Defects' : S.repeats.some(r => r.byCategory) ? 'Categories' : 'Reasons'} (${n - S.excluded.size}/${n}) ▾`;
   $('reasonBtn').classList.toggle('active', S.excluded.size > 0);
 }
 function reasonsChanged() {
