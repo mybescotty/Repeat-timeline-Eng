@@ -26,7 +26,8 @@ All processing happens in the browser. No data is uploaded anywhere.
 - Related EDVC defects that come up more than once are tagged (e.g. "Coolant ×2") and listed in the repeat header. "No related EDVC found" marks calls where the bus has EDVCs but none relate; "No driver submitted EDVC found" marks calls with none at all.
 
 ### HxGN only: same defect on the same bus
-- **Repeat** = the same Equipment with the same column H defect reported more than once. There's no call log needed; if one is loaded it names the depots, otherwise EAM depot codes are used.
+- **Repeat** = the same Equipment with the same column H defect reported more than once. No call log is needed.
+- **Depot names**: HxGN only has a depot code (kept separate per company, since codes repeat across OpCos). When the call log is loaded, each code is named after the call log Location most often seen for buses with that code. The setup screen lists every code in a **Depot names** table where you can type or correct names; these are remembered on that computer. Codes with no name show as "Depot code · company".
 
 ## Data handling
 - The exact report time comes from the first driver note timestamp (UTC, shown in local time). Rows without notes use the Date Reported.

@@ -254,6 +254,11 @@ details.others .ev.wo::before { left: -22px; }
         <input type="date" id="setFrom">
       </label>
     </div>
+    <div id="depotPanel" style="display:none;margin-top:16px">
+      <h2 style="margin:0 0 4px;font-size:14px">Depot names</h2>
+      <p>HxGN only gives a depot code. Names are filled in from the call log where the same buses appear; type any that are missing. Your names are remembered on this computer.</p>
+      <div id="depotTable" style="max-height:320px;overflow-y:auto;margin-top:8px"></div>
+    </div>
     <div style="margin-top:16px">
       <button class="upload-btn" id="btnBuild" disabled>Build timeline</button>
       <span id="buildMsg" style="margin-left:10px"></span>
@@ -553,6 +558,7 @@ function readWOs(rows) {
       type: g(r, 'type'), defect: category, item, notes: notes.map(n => n.text).filter(Boolean), drivers: [...new Set(notes.map(n => n.driver).filter(Boolean))], rdwy: /^y/i.test(g(r, 'rdwy')),
       status: g(r, 'status'), priority: g(r, 'priority'), assigned: g(r, 'assigned'), problem: g(r, 'problem'),
       depot: g(r, 'depot') ? 'Depot ' + g(r, 'depot') + (opco ? ' · ' + opco : '') : (opco || 'Unknown'),
+      depotCode: g(r, 'depot'), opco, depotKey: opco + '|' + g(r, 'depot'),
       closing, action, cleared: ts == null ? parseDate(g(r, 'cleared')) : parseDateNear(g(r, 'cleared'), ts, dayStart(ts)), nff: /no fault/i.test(action) || NFF_RE.test(closing) });
   }
   return { rows: out, map, header: rows[0] };
@@ -592,11 +598,50 @@ function chainsOf(list, opt) {
   if (cur.length) chains.push(cur);
   return chains;
 }
+/* Depot names for HxGN depot codes: learned from the call log (the Location most often seen for buses
+   with that code) unless the user has typed one */
+function loadDepotNames() { try { return JSON.parse(localStorage.getItem('rdt-depot-names') || '{}'); } catch (e) { return {}; } }
+function saveDepotName(key, name) {
+  const all = loadDepotNames(); if (name) all[key] = name; else delete all[key];
+  try { localStorage.setItem('rdt-depot-names', JSON.stringify(all)); } catch (e) {}
+}
+function depotCodes(wos, calls) {
+  const busLoc = new Map();
+  for (const c of [...(calls || [])].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0))) if (c.depot && c.depot !== 'Unknown') busLoc.set(c.bk, c.depot);
+  const codes = new Map();
+  for (const w of wos) {
+    if (!w.depotCode) continue;
+    if (!codes.has(w.depotKey)) codes.set(w.depotKey, { key: w.depotKey, code: w.depotCode, opco: w.opco, n: 0, votes: new Map() });
+    const d = codes.get(w.depotKey); d.n++;
+    const loc = busLoc.get(w.bk); if (loc) d.votes.set(loc, (d.votes.get(loc) || 0) + 1);
+  }
+  const saved = loadDepotNames();
+  for (const d of codes.values()) {
+    const best = [...d.votes.entries()].sort((a, b) => b[1] - a[1])[0];
+    d.learned = best ? best[0] : '';
+    d.name = saved[d.key] || d.learned;
+  }
+  return [...codes.values()].sort((a, b) => a.opco.localeCompare(b.opco) || a.code.localeCompare(b.code, undefined, { numeric: true }));
+}
+function renderDepotTable() {
+  if (!S.wos) return;
+  const list = depotCodes(S.wos.rows, S.calls && S.calls.rows);
+  const missing = list.filter(d => !d.name).length;
+  $('depotTable').innerHTML = `<table class="wo-table" style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>
+    <th style="text-align:left;padding:5px 8px;background:var(--bg-header);color:#fff">Code</th><th style="text-align:left;padding:5px 8px;background:var(--bg-header);color:#fff">Company</th>
+    <th style="text-align:right;padding:5px 8px;background:var(--bg-header);color:#fff">EDVCs</th><th style="text-align:left;padding:5px 8px;background:var(--bg-header);color:#fff">Depot name</th></tr></thead><tbody>`
+    + list.map(d => `<tr${d.name ? '' : ' style="background:var(--row-amber)"'}><td style="padding:4px 8px;border-bottom:1px solid #eaecef">${esc(d.code)}</td><td style="padding:4px 8px;border-bottom:1px solid #eaecef">${esc(d.opco)}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid #eaecef;text-align:right">${d.n.toLocaleString()}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid #eaecef"><input data-key="${esc(d.key)}" value="${esc(d.name)}" placeholder="${d.learned ? esc(d.learned) : 'type depot name'}" style="border:1px solid var(--border);border-radius:5px;padding:3px 6px;font-size:12px;width:170px;color:var(--text-primary)">
+      ${d.learned && d.name === d.learned ? '<span style="font-size:10px;color:var(--text-secondary)"> from call log</span>' : ''}</td></tr>`).join('')
+    + `</tbody></table>${missing ? `<div style="font-size:12px;color:#c0392b;margin-top:6px">${missing} code${missing === 1 ? '' : 's'} without a name (highlighted) will show as "Depot code · company".</div>` : ''}`;
+}
 function buildEdvcRepeats(wos, opt, calls) {
   const fromTs = opt.from ? parseDate(opt.from) : null;
   // Depot names from the call log (latest Location per bus) when it's loaded
   const callDepot = new Map();
   for (const c of [...(calls || [])].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0))) callDepot.set(c.bk, c.depot);
+  const codeName = new Map(depotCodes(wos, calls).filter(d => d.name).map(d => [d.key, d.name]));
   const groups = new Map();
   for (const w of wos) {
     if (w.ts == null || (fromTs != null && w.ts < fromTs)) continue;
@@ -609,7 +654,7 @@ function buildEdvcRepeats(wos, opt, calls) {
     for (const ch of chainsOf(list, opt)) {
       if (ch.length < opt.min) continue;
       const last = ch[ch.length - 1];
-      repeats.push({ mode: 'edvc', bus: last.bus, bk: last.bk, reason: last.item, category: last.defect, depot: callDepot.get(last.bk) || last.depot,
+      repeats.push({ mode: 'edvc', bus: last.bus, bk: last.bk, reason: last.item, category: last.defect, depot: codeName.get(last.depotKey) || callDepot.get(last.bk) || last.depot,
         notes: last.closing, first: ch[0].ts, last: last.ts, count: ch.length, woCount: ch.length,
         nff: ch.filter(w => w.nff).length, lastOpen: last.cleared == null,
         events: ch.map((w, i) => ({ w: { ...w, clearedAfter: w.cleared != null ? w.cleared - dayStart(w.ts) : null }, gap: i ? w.ts - ch[i - 1].ts : null })) });
@@ -684,6 +729,7 @@ function loadFile(file, kind) {
       (kind === 'calls' ? $('dropCalls') : $('dropWO')).classList.add('ok');
     } catch (err) { fn.innerHTML = `<span class="err">${esc(err.message)}</span>`; }
     showColMap();
+    renderDepotTable();
     updateMode();
   };
   rd.readAsArrayBuffer(file);
@@ -709,6 +755,7 @@ function updateMode() {
   $('callsOpt').textContent = edvc ? '(optional: names the depots)' : '(required)';
   $('woWinLbl').style.display = edvc ? 'none' : '';
   $('edvcShowLbl').style.display = edvc ? 'none' : '';
+  $('depotPanel').style.display = edvc && S.wos ? '' : 'none';
   $('fromLbl').textContent = edvc ? 'Only EDVCs from (optional)' : 'Only calls from (optional)';
   $('modeHelp').textContent = edvc
     ? 'A repeat is the same bus with the same defect (the item at the start of Driver Comments, column H) reported more than once. Different defects on the same bus are not repeats.'
@@ -1052,6 +1099,7 @@ $('rsFilter').addEventListener('input', e => {
   $('reasonList').querySelectorAll('label').forEach(l => { l.style.display = !q || l.textContent.toLowerCase().includes(q) ? '' : 'none'; });
 });
 $('setMode').addEventListener('change', updateMode);
+$('depotTable').addEventListener('change', e => { if (e.target.dataset.key) { saveDepotName(e.target.dataset.key, e.target.value.trim()); renderDepotTable(); } });
 updateMode();
 document.addEventListener('click', e => { const dd = $('reasonDD'); if (dd.open && !dd.contains(e.target)) dd.open = false; });
 
