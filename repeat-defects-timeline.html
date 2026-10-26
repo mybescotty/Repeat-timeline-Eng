@@ -36,6 +36,9 @@ header h1 { margin: 0; font-size: 18px; }
 .action-btn:disabled { opacity: 0.4; cursor: default; }
 .pdf-btn { background: #27ae60; color: #fff; border: none; border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
 .pdf-btn:hover { background: #219a52; }
+.mail-btn { background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+.mail-btn:hover { background: var(--accent-hover); }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--bg-header); color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.25); z-index: 50; max-width: calc(100vw - 32px); }
 .badge-navy { background: #2D2A6E; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
 .badge-red  { background: #e74c3c; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
 .badge-amber{ background: #e67e22; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
@@ -827,6 +830,7 @@ function renderRepeat(r) {
   const badges = [`<span class="badge-navy">${r.count}× repeat</span>`,
     r.lastOpen ? `<span class="badge-red">Latest call: no related EDVC</span>` : `<span class="badge-green">Latest call: related EDVC found</span>`,
     r.nff ? `<span class="badge-amber">${r.nff} NFF / OK</span>` : '',
+    `<button class="mail-btn no-print" title="Copy this timeline and open a new email">✉ Email</button>`,
     `<button class="pdf-btn no-print" title="Print / save just this repeat as PDF">🖨 PDF</button>`].join('');
   return `<div class="repeat${open ? ' expanded' : ''}${r.lastOpen ? ' open-wo' : ''}" data-key="${esc(k)}">
     <div class="repeat-hdr">
@@ -843,6 +847,7 @@ function renderEdvcRepeat(r) {
   const badges = [`<span class="badge-navy">${r.count}× repeat</span>`,
     r.lastOpen ? `<span class="badge-red">Latest: not cleared</span>` : `<span class="badge-green">Latest: cleared</span>`,
     r.nff ? `<span class="badge-amber">${r.nff} NFF / OK</span>` : '',
+    `<button class="mail-btn no-print" title="Copy this timeline and open a new email">✉ Email</button>`,
     `<button class="pdf-btn no-print" title="Print / save just this repeat as PDF">🖨 PDF</button>`].join('');
   return `<div class="repeat${open ? ' expanded' : ''}${r.lastOpen ? ' open-wo' : ''}" data-key="${esc(k)}">
     <div class="repeat-hdr">
@@ -921,6 +926,65 @@ function doPrint() {
   document.title = 'Repeat Defects - ' + (S.depot === 'ALL' ? 'All depots' : S.depot) + ' - ' + fmtDay(Date.now()).replace(/\//g, '-');
   setTimeout(() => { window.print(); document.title = t; S.expandAll = prev; render(); }, 50);
 }
+/* ===== §7a Email a repeat ===== */
+// Outlook renders email with Word, so the copy uses tables and inline styles only
+function emailHtml(r) {
+  const F = 'font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#2D2A6E;';
+  // Two columns: calls span both, EDVCs sit in the second so they're indented under their call
+  const cell = (indent, style, inner) => indent ? `<td style="width:28px;font-size:1px">&nbsp;</td><td style="${style}">${inner}</td>` : `<td colspan="2" style="${style}">${inner}</td>`;
+  const row = (bg, border, inner, indent) => `<tr>${cell(indent, `${F}background:${bg};border-left:4px solid ${border};padding:7px 10px`, inner)}</tr><tr><td colspan="2" style="height:6px;font-size:1px">&nbsp;</td></tr>`;
+  const note = (t, indent) => `<tr>${cell(indent, `${F}font-size:11px;font-style:italic;color:#6b6b8a;padding:0 0 6px`, t)}</tr>`;
+  const wo = (w, when, indent) => row(w.cleared == null ? '#ffffff' : w.nff ? '#fdf2e0' : '#e8f6ee', w.cleared == null ? '#e74c3c' : w.nff ? '#e67e22' : '#27ae60',
+    `<b>${w.dateOnly ? fmtDay(w.ts) : fmt(w.ts)}</b> &nbsp;<span style="color:#6b6b8a">${w.wo ? 'WO ' + esc(w.wo) : 'EDVC'}${w.defect ? ' · ' + esc(w.defect) : ''} · ${esc(when)}</span>`
+    + `${w.cleared == null ? ` &nbsp;<b style="color:#c0392b">NOT CLEARED${w.status ? ' · ' + esc(w.status) : ''}</b>` : ''}${w.nff ? ' &nbsp;<b style="color:#e67e22">NFF / OK</b>' : ''}`
+    + (w.notes && w.notes.length ? `<br><b>Driver:</b> ${w.notes.map(esc).join('<br>')}` : '')
+    + `<br><b>Closing: ${w.closing ? esc(w.closing) : '<i>No closing comment</i>'}</b>`
+    + `<br><span style="font-size:11px;color:#6b6b8a">${[w.action && 'Action: ' + w.action, w.problem && 'Problem: ' + w.problem, w.assigned && 'By ' + w.assigned, w.cleared != null && 'Cleared ' + fmtDay(w.cleared)].filter(Boolean).map(esc).join(' · ')}</span>`, indent);
+  let body = '';
+  r.events.forEach((e, i) => {
+    if (i && e.gap != null) body += note('↻ ' + (r.mode === 'edvc' ? 'Same defect reported again ' : 'Repeated ') + (e.gap === 0 ? 'the same day' : dur(e.gap) + ' later'), false);
+    if (e.w) { body += wo(e.w, '#' + (i + 1), false); return; }
+    const c = e.call;
+    body += row('#fdecea', '#2D2A6E', `<b>${c.ts != null ? (c.dateOnly ? fmtDay(c.ts) : fmt(c.ts)) : esc(c.raw || '')}</b> &nbsp;<span style="color:#6b6b8a">CALL ${i + 1} · ${esc([c.category, c.reason].filter(Boolean).join(' · '))}${c.status ? ' · ' + esc(c.status) : ''}</span>`
+      + `<br><b>${esc(c.notes || '')}</b>${c.varNotes ? '<br>' + esc(c.varNotes) : ''}<br><span style="font-size:11px;color:#6b6b8a">${[c.depot, c.route && 'Route ' + c.route, c.driver && 'Driver ' + c.driver].filter(Boolean).map(esc).join(' · ')}</span>`, false);
+    if (!e.wos.length) body += row('#ffffff', '#e74c3c', `<span style="color:#c0392b">${(e.others || []).length ? 'No related EDVC found for ' + esc(c.category || c.reason) : 'No driver submitted EDVC found'}</span>`, true);
+    e.wos.forEach(w => { body += wo(w, w.dateOnly || c.dateOnly ? (dayStart(w.ts) === dayStart(c.ts) ? 'same day' : dur(w.ts - dayStart(c.ts)) + ' after call day') : rel(w.after) + ' call', true); });
+    if ((e.others || []).length) body += note(`+ ${e.others.length} other EDVC${e.others.length === 1 ? '' : 's'} on this bus, not related to ${esc(c.category || c.reason)}`, true);
+  });
+  const title = r.mode === 'edvc' ? `${r.reason} — Bus ${r.bus}` : (r.notes || r.reason);
+  const facts = r.mode === 'edvc'
+    ? [['Bus', r.bus], ['Depot', r.depot], ['Defect', r.category || r.reason], ['Period', fmtDay(r.first) + ' → ' + fmtDay(r.last)], ['Reports', r.count + '×'], ['Latest', r.lastOpen ? 'Not cleared' : 'Cleared']]
+    : [['Bus', r.bus + (r.vtype ? ' (' + r.vtype + ')' : '')], ['Depot', r.depot], [r.byCategory ? 'Lost mileage' : 'Reason', r.reason], ...(r.byCategory && r.callReasons.length ? [['Reason', r.callReasons.join(', ')]] : []), ['Period', fmtDay(r.first) + ' → ' + fmtDay(r.last)], ['Calls', r.count + '× repeat'], ['Latest call', r.lastOpen ? 'No related EDVC' : 'Related EDVC found'], ...(r.repeating && r.repeating.length ? [['Repeating defects', r.repeating.map(x => x.name + ' ×' + x.n).join(', ')]] : [])];
+  return `<div style="${F}"><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:760px">
+    <tr><td style="${F}background:#2D2A6E;color:#ffffff;padding:10px 12px"><b style="font-size:15px">Repeat defect: ${esc(title)}</b><br><span style="font-size:10px">First Bus Franchise · Engineering · Repeat Defects Timeline</span></td></tr>
+    <tr><td style="padding:8px 0"><table cellpadding="0" cellspacing="0" style="border-collapse:collapse">${facts.map(([k, v]) => `<tr><td style="${F}color:#6b6b8a;padding:2px 12px 2px 0">${esc(k)}</td><td style="${F}font-weight:bold;padding:2px 0">${esc(v)}</td></tr>`).join('')}</table></td></tr>
+    <tr><td><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%">${body}</table></td></tr></table></div>`;
+}
+function emailSubject(r) {
+  return `Repeat defect – Bus ${r.bus} – ${r.reason} – ${r.depot} (${r.count}× ${fmtDay(r.first)} to ${fmtDay(r.last)})`;
+}
+function toast(msg, ms) {
+  const t = document.createElement('div'); t.className = 'toast no-print'; t.textContent = msg;
+  document.body.appendChild(t); setTimeout(() => t.remove(), ms || 6000);
+}
+// Copy rich HTML via a selection so it works from a local file in any browser
+function copyHtml(html) {
+  const box = document.createElement('div');
+  box.contentEditable = 'true'; box.innerHTML = html;
+  box.style.cssText = 'position:fixed;left:-10000px;top:0;background:#fff';
+  document.body.appendChild(box);
+  const range = document.createRange(); range.selectNodeContents(box);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+  sel.removeAllRanges(); box.remove();
+  return ok;
+}
+function emailOne(card) {
+  const r = S.repeats.find(x => repKey(x) === card.dataset.key); if (!r) return;
+  const ok = copyHtml(emailHtml(r));
+  window.location.href = 'mailto:?subject=' + encodeURIComponent(emailSubject(r));
+  toast(ok ? '✉ Timeline copied. In the new email, click in the body and press Ctrl+V to paste it.' : 'Could not copy automatically: use the 🖨 PDF button and attach the file instead.', 9000);
+}
 function printOne(card) {
   const r = S.repeats.find(x => repKey(x) === card.dataset.key); if (!r) return;
   card.classList.add('print-target'); card.closest('.depot').classList.add('has-target'); card.closest('.cat-group').classList.add('has-target');
@@ -964,6 +1028,7 @@ $('btnReload').addEventListener('click', () => { $('layout').classList.remove('s
 $('depotNav').addEventListener('click', e => { const it = e.target.closest('.nav-item'); if (!it) return; S.depot = it.dataset.depot; render(); window.scrollTo(0, 0); });
 $('report').addEventListener('click', e => {
   const pb = e.target.closest('.pdf-btn'); if (pb) { printOne(pb.closest('.repeat')); return; }
+  const mb = e.target.closest('.mail-btn'); if (mb) { emailOne(mb.closest('.repeat')); return; }
   const gh = e.target.closest('.cat-hdr');
   if (gh) { const g = gh.parentElement; if (g.classList.toggle('open')) S.openGroups.add(g.dataset.group); else S.openGroups.delete(g.dataset.group); return; }
   const h = e.target.closest('.repeat-hdr'); if (!h) return;

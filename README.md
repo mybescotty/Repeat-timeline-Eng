@@ -41,6 +41,7 @@ All processing happens in the browser. No data is uploaded anywhere.
 - **Category groups**: inside each depot, repeats sit in collapsible groups by lost mileage category (e.g. Fluid/Air Leaks, Engine Failure), largest first. Each group header shows its repeat count and how many have no related EDVC. Click a group to open it. Searching opens the groups with matches, Expand all opens everything, and printing shows every group open. In HxGN-only mode, groups are by defect area (e.g. Driver Warning Lights).
 - **Defects / Reasons dropdown**: untick what you don't need (with a find box). The selection is remembered in your browser and saved into the shareable HTML.
 - **Print / PDF**: prints the current view (selected depot, search and filters) with every timeline expanded, one depot per page.
+- **✉ Email on each repeat**: copies that repeat's timeline as formatted content (tables and inline colours that Outlook keeps) and opens a new blank email with the subject filled in (bus, category, depot, count, dates). Click in the body and press Ctrl+V. Browsers can't attach files to an email from a web page; to send the PDF as well, save it with 🖨 PDF and attach it.
 - **🖨 PDF on each repeat**: prints or saves just that one repeat. The file name defaults to the bus, defect and date.
 - **Save shareable HTML**: downloads a self-contained snapshot. Recipients open it in a browser without the CSVs, and can still filter by depot, search and print.
 
