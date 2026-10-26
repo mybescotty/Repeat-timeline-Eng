@@ -37,6 +37,7 @@ All processing happens in the browser. No data is uploaded anywhere.
 - Colours: green = EDVC cleared, amber = no fault found / ok for service, red outline = not cleared yet, red = call log call.
 
 ## Filters and outputs
+- **Category groups**: inside each depot, repeats sit in collapsible groups by lost mileage category (e.g. Fluid/Air Leaks, Engine Failure), largest first. Each group header shows its repeat count and how many have no related EDVC. Click a group to open it. Searching opens the groups with matches, Expand all opens everything, and printing shows every group open. In HxGN-only mode, groups are by defect area (e.g. Driver Warning Lights).
 - **Defects / Reasons dropdown**: untick what you don't need (with a find box). The selection is remembered in your browser and saved into the shareable HTML.
 - **Print / PDF**: prints the current view (selected depot, search and filters) with every timeline expanded, one depot per page.
 - **🖨 PDF on each repeat**: prints or saves just that one repeat. The file name defaults to the bus, defect and date.

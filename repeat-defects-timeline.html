@@ -83,6 +83,14 @@ main { padding: 16px 20px 40px; min-width: 0; }
 .depot-hdr { background: var(--bg-header); color: #fff; padding: 9px 14px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; }
 .depot-hdr h2 { margin: 0; font-size: 15px; }
 .depot-body { background: var(--bg-panel); border: 1px solid var(--border); border-top: none; border-radius: 0 0 8px 8px; padding: 10px; }
+.cat-group { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+.cat-group:last-child { margin-bottom: 0; }
+.cat-hdr { display: flex; align-items: center; gap: 10px; padding: 9px 14px; cursor: pointer; background: #f0f0f6; font-weight: 700; font-size: 14px; }
+.cat-hdr:hover { background: rgba(229,0,125,0.08); }
+.cat-hdr .cat-n { margin-left: auto; display: flex; gap: 6px; align-items: center; font-weight: 400; font-size: 12px; color: var(--text-secondary); }
+.cat-body { display: none; padding: 10px; }
+.cat-group.open .cat-body { display: block; }
+.cat-group.open .chev { transform: rotate(90deg); }
 .repeat { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; break-inside: avoid-page; }
 .repeat:last-child { margin-bottom: 0; }
 .repeat-hdr { padding: 10px 14px; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; border-left: 5px solid var(--accent); }
@@ -162,11 +170,13 @@ details.others .ev.wo::before { left: -22px; }
   .layout.show { display: block; }
   main { padding: 0; }
   .print-only { display: block; }
-  .repeat-body { display: block !important; }
+  .repeat-body, .cat-body { display: block !important; }
+  .cat-group { break-inside: auto; }
+  .cat-hdr { break-after: avoid; cursor: default; }
   .chev { display: none; }
   .depot { break-before: page; }
   .depot.first { break-before: auto; }
-  body.print-one .depot:not(.has-target), body.print-one .repeat:not(.print-target), body.print-one .summary, body.print-one .depot-hdr span, body.print-one .report-meta .print-only { display: none !important; }
+  body.print-one .depot:not(.has-target), body.print-one .cat-group:not(.has-target), body.print-one .repeat:not(.print-target), body.print-one .cat-hdr .cat-n, body.print-one .summary, body.print-one .depot-hdr span, body.print-one .report-meta .print-only { display: none !important; }
   body.print-one .depot { break-before: auto; }
   .depot-hdr { border-radius: 0; }
   .repeat { break-inside: auto; }
@@ -640,7 +650,7 @@ function makeRepeat(chain, busWOs, opt) {
 
 /* ===== §5 State + file handling ===== */
 const $ = id => document.getElementById(id);
-const S = { calls: null, wos: null, files: { calls: '', wo: '' }, repeats: [], meta: null, depot: 'ALL', q: '', openOnly: false, expandAll: false, expanded: new Set(), sort: 'count', excluded: new Set() };
+const S = { calls: null, wos: null, files: { calls: '', wo: '' }, repeats: [], meta: null, depot: 'ALL', q: '', openOnly: false, expandAll: false, expanded: new Set(), openGroups: new Set(), sort: 'count', excluded: new Set() };
 
 function wireDrop(dropId, inputId, kind) {
   const drop = $(dropId), input = $(inputId);
@@ -712,7 +722,7 @@ function build() {
   }, 20);
 }
 function showReport(excluded) {
-  S.depot = 'ALL'; S.expanded.clear();
+  S.depot = 'ALL'; S.expanded.clear(); S.openGroups.clear();
   if (excluded) S.excluded = new Set(excluded);
   else try { S.excluded = new Set(JSON.parse(localStorage.getItem(exclKey()) || '[]')); } catch (e) { S.excluded = new Set(); }
   renderReasons();
@@ -768,11 +778,20 @@ function render() {
   let html = '', first = true;
   for (const d of [...byDepot.keys()].sort((a, b) => a.localeCompare(b))) {
     const reps = sortList(byDepot.get(d));
-    html += `<section class="depot${first ? ' first' : ''}"><div class="depot-hdr"><h2>${esc(d)}</h2><span>${reps.length} repeat${reps.length === 1 ? '' : 's'} · ${new Set(reps.map(r => r.bk)).size} buses</span></div><div class="depot-body">${reps.map(renderRepeat).join('')}</div></section>`;
+    // Group the depot's repeats by lost mileage category (or defect area in HxGN-only mode)
+    const byCat = new Map();
+    for (const rp of reps) { const g = groupName(rp); if (!byCat.has(g)) byCat.set(g, []); byCat.get(g).push(rp); }
+    const groups = [...byCat.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])).map(([g, list]) => {
+      const gk = d + '|' + g, open = S.expandAll || S.openGroups.has(gk) || !!S.q.trim();
+      const noRel = list.filter(x => x.lastOpen).length;
+      return `<div class="cat-group${open ? ' open' : ''}" data-group="${esc(gk)}"><div class="cat-hdr"><span class="chev">▶</span>${esc(g)}<span class="cat-n"><span class="badge-navy">${list.length} repeat${list.length === 1 ? '' : 's'}</span>${noRel ? `<span class="badge-red">${noRel} ${S.meta.opt.mode === 'edvc' ? 'not cleared' : 'no related EDVC'}</span>` : ''}</span></div><div class="cat-body">${list.map(renderRepeat).join('')}</div></div>`;
+    }).join('');
+    html += `<section class="depot${first ? ' first' : ''}"><div class="depot-hdr"><h2>${esc(d)}</h2><span>${reps.length} repeat${reps.length === 1 ? '' : 's'} · ${new Set(reps.map(r => r.bk)).size} buses</span></div><div class="depot-body">${groups}</div></section>`;
     first = false;
   }
   $('report').innerHTML = html;
 }
+const groupName = r => r.mode === 'edvc' ? (r.category && r.category.includes('-') ? r.category.slice(0, r.category.indexOf('-')).trim() : r.category || 'Other') : r.reason || 'Other';
 function renderRepeat(r) {
   if (r.mode === 'edvc') return renderEdvcRepeat(r);
   const k = repKey(r);
@@ -876,14 +895,14 @@ function doPrint() {
 }
 function printOne(card) {
   const r = S.repeats.find(x => repKey(x) === card.dataset.key); if (!r) return;
-  card.classList.add('print-target'); card.closest('.depot').classList.add('has-target');
+  card.classList.add('print-target'); card.closest('.depot').classList.add('has-target'); card.closest('.cat-group').classList.add('has-target');
   document.body.classList.add('print-one');
   const t = document.title;
   document.title = ('Repeat Defect - Bus ' + r.bus + ' - ' + r.reason + ' - ' + fmtDay(Date.now()).replace(/\//g, '-')).replace(/[\\/:*?"<>|]/g, '-');
   setTimeout(() => {
     window.print();
     document.title = t; document.body.classList.remove('print-one');
-    card.classList.remove('print-target'); card.closest('.depot').classList.remove('has-target');
+    card.classList.remove('print-target'); card.closest('.depot').classList.remove('has-target'); card.closest('.cat-group').classList.remove('has-target');
   }, 50);
 }
 function doExport() {
@@ -917,13 +936,15 @@ $('btnReload').addEventListener('click', () => { $('layout').classList.remove('s
 $('depotNav').addEventListener('click', e => { const it = e.target.closest('.nav-item'); if (!it) return; S.depot = it.dataset.depot; render(); window.scrollTo(0, 0); });
 $('report').addEventListener('click', e => {
   const pb = e.target.closest('.pdf-btn'); if (pb) { printOne(pb.closest('.repeat')); return; }
+  const gh = e.target.closest('.cat-hdr');
+  if (gh) { const g = gh.parentElement; if (g.classList.toggle('open')) S.openGroups.add(g.dataset.group); else S.openGroups.delete(g.dataset.group); return; }
   const h = e.target.closest('.repeat-hdr'); if (!h) return;
   const card = h.parentElement; const k = card.dataset.key;
   if (card.classList.toggle('expanded')) S.expanded.add(k); else S.expanded.delete(k);
 });
 let qTimer; $('search').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => { S.q = e.target.value; render(); }, 200); });
 $('tglOpen').addEventListener('click', e => { S.openOnly = !S.openOnly; e.target.classList.toggle('active', S.openOnly); render(); });
-$('tglExpand').addEventListener('click', e => { S.expandAll = !S.expandAll; if (!S.expandAll) S.expanded.clear(); e.target.classList.toggle('active', S.expandAll); e.target.textContent = S.expandAll ? 'Collapse all' : 'Expand all'; render(); });
+$('tglExpand').addEventListener('click', e => { S.expandAll = !S.expandAll; if (!S.expandAll) { S.expanded.clear(); S.openGroups.clear(); } e.target.classList.toggle('active', S.expandAll); e.target.textContent = S.expandAll ? 'Collapse all' : 'Expand all'; render(); });
 $('sortBy').addEventListener('change', e => { S.sort = e.target.value; render(); });
 $('reasonList').addEventListener('change', e => {
   const k = e.target.value; if (e.target.checked) S.excluded.delete(k); else S.excluded.add(k);
