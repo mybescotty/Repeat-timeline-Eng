@@ -119,6 +119,7 @@ main { padding: 16px 20px 40px; min-width: 0; }
 .ev.wo.uncleared .ev-card { background: #fff; border-color: rgba(231,76,60,0.5); }
 .ev.wo.uncleared::before { border-color: #e74c3c; }
 .ev.wo.top { margin-left: 0; }
+.ev.hl .ev-card { box-shadow: 0 0 0 2px var(--accent); }
 details.others { margin-left: 22px; }
 details.others > summary { cursor: pointer; list-style: none; margin: -4px 0 8px; }
 details.others > summary::-webkit-details-marker { display: none; }
@@ -273,6 +274,8 @@ details.others .ev.wo::before { left: -22px; }
           <div id="reasonList"></div>
         </div>
       </details>
+      <select id="fDriver" title="Show only repeats involving this driver" style="border:1px solid var(--border);border-radius:5px;padding:5px 6px;font-size:12px;color:var(--text-primary);max-width:220px"><option value="">All drivers</option></select>
+      <select id="fEngineer" title="Show only repeats with an EDVC assigned to this engineer" style="border:1px solid var(--border);border-radius:5px;padding:5px 6px;font-size:12px;color:var(--text-primary);max-width:220px"><option value="">All engineers</option></select>
       <button class="toggle-btn" id="tglOpen">No EDVC only</button>
       <button class="toggle-btn" id="tglExpand">Expand all</button>
       <label style="font-size:12px;color:var(--text-secondary)">Sort
@@ -517,7 +520,7 @@ function parseDriverNotes(s) {
   hits.forEach((h, i) => {
     const text = clean(s.slice(h.index + h[0].length, i + 1 < hits.length ? hits[i + 1].index : s.length));
     const ts = Date.parse(h[1] + 'Z');
-    if (!seen.has(text)) { seen.add(text); out.push({ ts: isNaN(ts) ? null : ts, text: text + (h[2].trim() ? ` (driver ${h[2].trim()})` : '') }); }
+    if (!seen.has(text)) { seen.add(text); out.push({ ts: isNaN(ts) ? null : ts, driver: h[2].trim(), text: text + (h[2].trim() ? ` (driver ${h[2].trim()})` : '') }); }
   });
   return out;
 }
@@ -544,7 +547,7 @@ function readWOs(rows) {
     const item = (hm ? hm[1] : category.includes('-') ? category.slice(category.indexOf('-') + 1) : category || g(r, 'type') || 'Unknown').trim();
     const opco = g(r, 'opco').replace(/^\d+\s*-\s*/, '').replace(/\s+(Ltd|Limited)\.?$/i, '');
     out.push({ wo: g(r, 'wo'), bus, bk: busKey(bus), ts, dateOnly: noteTs == null && !/\d:\d/.test(g(r, 'reported')),
-      type: g(r, 'type'), defect: category, item, notes: notes.map(n => n.text).filter(Boolean), rdwy: /^y/i.test(g(r, 'rdwy')),
+      type: g(r, 'type'), defect: category, item, notes: notes.map(n => n.text).filter(Boolean), drivers: [...new Set(notes.map(n => n.driver).filter(Boolean))], rdwy: /^y/i.test(g(r, 'rdwy')),
       status: g(r, 'status'), priority: g(r, 'priority'), assigned: g(r, 'assigned'), problem: g(r, 'problem'),
       depot: g(r, 'depot') ? 'Depot ' + g(r, 'depot') + (opco ? ' · ' + opco : '') : (opco || 'Unknown'),
       closing, action, cleared: ts == null ? parseDate(g(r, 'cleared')) : parseDateNear(g(r, 'cleared'), ts, dayStart(ts)), nff: /no fault/i.test(action) || NFF_RE.test(closing) });
@@ -650,7 +653,7 @@ function makeRepeat(chain, busWOs, opt) {
 
 /* ===== §5 State + file handling ===== */
 const $ = id => document.getElementById(id);
-const S = { calls: null, wos: null, files: { calls: '', wo: '' }, repeats: [], meta: null, depot: 'ALL', q: '', openOnly: false, expandAll: false, expanded: new Set(), openGroups: new Set(), sort: 'count', excluded: new Set() };
+const S = { calls: null, wos: null, files: { calls: '', wo: '' }, repeats: [], meta: null, depot: 'ALL', q: '', driver: '', engineer: '', openOnly: false, expandAll: false, expanded: new Set(), openGroups: new Set(), sort: 'count', excluded: new Set() };
 
 function wireDrop(dropId, inputId, kind) {
   const drop = $(dropId), input = $(inputId);
@@ -725,7 +728,7 @@ function showReport(excluded) {
   S.depot = 'ALL'; S.expanded.clear(); S.openGroups.clear();
   if (excluded) S.excluded = new Set(excluded);
   else try { S.excluded = new Set(JSON.parse(localStorage.getItem(exclKey()) || '[]')); } catch (e) { S.excluded = new Set(); }
-  renderReasons();
+  renderReasons(); fillPeopleFilters();
   $('loader').style.display = 'none'; $('layout').classList.add('show');
   $('btnReload').style.display = ''; $('btnPrint').disabled = false; $('btnExport').disabled = false;
   render();
@@ -740,9 +743,33 @@ function haystack(r) {
   if (!r._hs) r._hs = [r.bus, r.reason, r.depot, r.vtype, r.category, ...r.events.flatMap(e => e.w ? wf(e.w) : [e.call.notes, e.call.varNotes, e.call.route, e.call.driver, ...e.wos.flatMap(wf)])].join(' ').toLowerCase();
   return r._hs;
 }
+// Driver key: the driver number if there is one (call log "(423340) Mark Burrows" and HxGN "Driver 423340" match), else the name
+const driverKey = v => { const m = String(v || '').match(/\d{3,}/); return m ? m[0].replace(/^0+(?=\d)/, '') : String(v || '').trim().toLowerCase(); };
+const driverLabels = new Map();
+function people(r) {
+  if (r._pp) return r._pp;
+  const drivers = new Set(), engineers = new Set();
+  const addDriver = (v, label) => { const k = driverKey(v); if (!k) return; drivers.add(k); if (label && (!driverLabels.has(k) || label.length > driverLabels.get(k).length)) driverLabels.set(k, label); else if (!driverLabels.has(k)) driverLabels.set(k, String(v).trim()); };
+  const addWo = w => { (w.drivers || []).forEach(d => addDriver(d)); if (w.assigned) engineers.add(w.assigned); };
+  for (const e of r.events) {
+    if (e.w) addWo(e.w);
+    else { if (e.call.driver) addDriver(e.call.driver, e.call.driver); e.wos.forEach(addWo); }
+  }
+  return (r._pp = { drivers, engineers });
+}
+function fillPeopleFilters() {
+  const dc = new Map(), ec = new Map();
+  for (const r of S.repeats) { const p = people(r); p.drivers.forEach(k => dc.set(k, (dc.get(k) || 0) + 1)); p.engineers.forEach(k => ec.set(k, (ec.get(k) || 0) + 1)); }
+  const opts = (map, label, all) => `<option value="">${all}</option>` + [...map.entries()].sort((a, b) => label(a[0]).localeCompare(label(b[0]), undefined, { numeric: true }))
+    .map(([k, n]) => `<option value="${esc(k)}">${esc(label(k))} (${n})</option>`).join('');
+  $('fDriver').innerHTML = opts(dc, k => driverLabels.get(k) || k, 'All drivers');
+  $('fEngineer').innerHTML = opts(ec, k => k, 'All engineers');
+  S.driver = ''; S.engineer = '';
+}
 function filtered(ignoreDepot) {
   const q = S.q.trim().toLowerCase();
-  return S.repeats.filter(r => (ignoreDepot || S.depot === 'ALL' || r.depot === S.depot) && (!S.openOnly || r.lastOpen) && !S.excluded.has(reasonKey(r.reason)) && (!q || haystack(r).includes(q)));
+  return S.repeats.filter(r => (ignoreDepot || S.depot === 'ALL' || r.depot === S.depot) && (!S.openOnly || r.lastOpen) && !S.excluded.has(reasonKey(r.reason))
+    && (!S.driver || people(r).drivers.has(S.driver)) && (!S.engineer || people(r).engineers.has(S.engineer)) && (!q || haystack(r).includes(q)));
 }
 function sortList(list) {
   const f = { count: (a, b) => b.count - a.count || (b.last ?? 0) - (a.last ?? 0), recent: (a, b) => (b.last ?? 0) - (a.last ?? 0), bus: (a, b) => String(a.bk).localeCompare(String(b.bk), undefined, { numeric: true }) }[S.sort];
@@ -761,7 +788,7 @@ function render() {
   const ed = o.mode === 'edvc';
   $('reportMeta').innerHTML = `Sources: ${m.files.calls ? `<b>${esc(m.files.calls)}</b> (${m.nCalls.toLocaleString()} calls) · ` : ''}<b>${esc(m.files.wo)}</b> (${m.nWOs.toLocaleString()} EDVCs) · Generated ${fmt(m.generated)}<br>
     ${ed ? `Repeat = same bus + same defect (EDVC column H) ≥ ${o.min} times` : `Repeat = same bus + same lost mileage category (col O) ≥ ${o.min} times`}${o.span ? `, ≤ ${o.span} days apart` : ''}${o.from ? `, ${ed ? 'EDVCs' : 'calls'} from ${fmtDay(parseDate(o.from))}` : ''}${ed ? '' : ` · HxGN repairs shown from each call day ${o.woWin ? `up to ${o.woWin} days after` : 'up to the next call'}${o.edvcShow === 'all' ? '' : ', only EDVCs related to the call category'}`}
-    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.openOnly ? (ed ? ' · latest not cleared only' : ' · no related EDVC only') : ''}${S.excluded.size ? (ed ? ' · defects excluded: ' : ' · excluded: ') + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
+    <span class="print-only">View: ${esc(S.depot === 'ALL' ? 'All depots' : S.depot)}${S.q ? ' · search "' + esc(S.q) + '"' : ''}${S.driver ? ' · driver ' + esc(driverLabels.get(S.driver) || S.driver) : ''}${S.engineer ? ' · engineer ' + esc(S.engineer) : ''}${S.openOnly ? (ed ? ' · latest not cleared only' : ' · no related EDVC only') : ''}${S.excluded.size ? (ed ? ' · defects excluded: ' : ' · excluded: ') + esc(reasonNames().filter(x => S.excluded.has(x.k)).map(x => x.name).join(', ')) : ''}</span>`;
   const buses = new Set(list.map(r => r.bk)).size;
   const calls = list.reduce((s, r) => s + r.count, 0);
   const open = list.filter(r => r.lastOpen).length;
@@ -833,7 +860,8 @@ function edvcCard(w, cls, when, clearedSuffix) {
     w.rdwy ? '<span class="badge-red">Roadworthiness</span>' : '', /vor/i.test(w.priority + w.status) ? '<span class="badge-red">VOR</span>' : '',
     w.cleared == null ? `<span class="badge-red">Not cleared${w.status ? ' · ' + esc(w.status) : ''}</span>` : '',
     w.nff ? '<span class="badge-amber">NFF / OK</span>' : '', w.rep >= 2 ? `<span class="badge-pink">${esc(w.item)} ×${w.rep}</span>` : ''].join('');
-  return `<div class="ev wo ${cls}${w.nff ? ' nff' : ''}${w.cleared == null ? ' uncleared' : ''}"><div class="ev-card">
+  const hl = (S.engineer && w.assigned === S.engineer) || (S.driver && (w.drivers || []).some(d => driverKey(d) === S.driver));
+  return `<div class="ev wo ${cls}${hl ? ' hl' : ''}${w.nff ? ' nff' : ''}${w.cleared == null ? ' uncleared' : ''}"><div class="ev-card">
     <div class="ev-top"><span class="ev-date">${w.dateOnly ? fmtDay(w.ts) : fmt(w.ts)}</span><span class="ev-kind">${w.wo ? 'WO ' + esc(w.wo) : 'EDVC'}${w.defect ? ' · ' + esc(w.defect) : ''}</span><span class="ev-meta" style="margin:0">${esc(when)}</span>${badges}</div>
     ${w.notes.length ? `<div class="ev-text"><b>Driver:</b> ${w.notes.map(esc).join('<br>')}</div>` : ''}
     <div class="ev-head">Closing: ${w.closing ? esc(w.closing) : '<i style="opacity:.6">No closing comment</i>'}</div>
@@ -845,7 +873,7 @@ function renderEvent(e, i) {
   const c = e.call;
   let h = '';
   if (i > 0) h += `<div class="gap">↻ Repeated ${e.gap != null ? (e.gap === 0 ? 'the same day' : dur(e.gap) + ' later') : ''}</div>`;
-  h += `<div class="ev call"><div class="ev-card">
+  h += `<div class="ev call${S.driver && c.driver && driverKey(c.driver) === S.driver ? ' hl' : ''}"><div class="ev-card">
     <div class="ev-top"><span class="ev-date">${c.ts != null ? (c.dateOnly ? fmtDay(c.ts) : fmt(c.ts)) : esc(c.raw || 'No date')}</span><span class="ev-kind">Call ${i + 1} · ${esc([c.category, c.reason].filter(Boolean).join(' · '))}</span>${c.status ? `<span class="badge-navy">${esc(c.status)}</span>` : ''}</div>
     <div class="ev-head">${c.notes ? esc(c.notes) : '<i style="opacity:.6">No notes</i>'}</div>
     ${c.varNotes ? `<div class="ev-text">${esc(c.varNotes)}</div>` : ''}
@@ -906,7 +934,7 @@ function printOne(card) {
   }, 50);
 }
 function doExport() {
-  const strip = r => { const { _hs, ...rest } = r; return rest; };
+  const strip = r => { const { _hs, _pp, ...rest } = r; return rest; };
   const snap = { v: 1, meta: S.meta, repeats: S.repeats.map(strip), excluded: [...S.excluded] };
   const doc = document.documentElement.cloneNode(true);
   doc.querySelectorAll('#embedded').forEach(n => n.remove());
@@ -946,6 +974,8 @@ let qTimer; $('search').addEventListener('input', e => { clearTimeout(qTimer); q
 $('tglOpen').addEventListener('click', e => { S.openOnly = !S.openOnly; e.target.classList.toggle('active', S.openOnly); render(); });
 $('tglExpand').addEventListener('click', e => { S.expandAll = !S.expandAll; if (!S.expandAll) { S.expanded.clear(); S.openGroups.clear(); } e.target.classList.toggle('active', S.expandAll); e.target.textContent = S.expandAll ? 'Collapse all' : 'Expand all'; render(); });
 $('sortBy').addEventListener('change', e => { S.sort = e.target.value; render(); });
+$('fDriver').addEventListener('change', e => { S.driver = e.target.value; render(); });
+$('fEngineer').addEventListener('change', e => { S.engineer = e.target.value; render(); });
 $('reasonList').addEventListener('change', e => {
   const k = e.target.value; if (e.target.checked) S.excluded.delete(k); else S.excluded.add(k);
   reasonsChanged();
